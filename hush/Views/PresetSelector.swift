@@ -1,6 +1,12 @@
 import SwiftUI
 import SwiftData
 
+func soundSourceSummary(_ sources: [SoundSource]) -> String {
+    let names = sources.map(\.type.rawValue)
+    if names.count <= 2 { return names.joined(separator: " + ") }
+    return "\(names[0]) + \(names[1]) + \(names.count - 2) more"
+}
+
 struct PresetSelector: View {
     let onSelect: (Preset) -> Void
     let onRandom: () -> Void
@@ -75,6 +81,7 @@ struct PresetSelector: View {
                 )
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("Random Mix — shuffle two to three sounds")
 
             ForEach(orderedPresets, id: \.preset.id) { entry in
                 let preset = entry.preset
@@ -90,6 +97,8 @@ struct PresetSelector: View {
                     )
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel(preset.name)
+                .accessibilityHint("Double tap to play")
                 .contextMenu {
                     Button {
                         presetToEdit = preset
@@ -241,9 +250,7 @@ struct PresetSelector: View {
     }
 
     private func presetSummary(_ preset: Preset) -> String {
-        let names = preset.sources.map(\.type.rawValue)
-        if names.count <= 2 { return names.joined(separator: " + ") }
-        return "\(names[0]) + \(names[1]) + \(names.count - 2) more"
+        soundSourceSummary(preset.sources)
     }
 }
 

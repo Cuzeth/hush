@@ -23,7 +23,7 @@ enum BinauralRange: String, CaseIterable, Identifiable, Codable {
         case .alpha: return 8...13
         case .smr: return 12...15
         case .beta: return 13...30
-        case .gamma: return 40...40
+        case .gamma: return 38...42
         }
     }
 
@@ -41,7 +41,7 @@ enum BinauralRange: String, CaseIterable, Identifiable, Codable {
         case .alpha: return "Calm Focus (8-13 Hz)"
         case .smr: return "ADHD Sweet Spot (12-15 Hz)"
         case .beta: return "Alertness (13-30 Hz)"
-        case .gamma: return "Peak Cognition (40 Hz)"
+        case .gamma: return "Peak Cognition (38-42 Hz)"
         }
     }
 }

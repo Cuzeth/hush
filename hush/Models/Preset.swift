@@ -86,9 +86,24 @@ final class SavedPreset {
         self.createdAt = Date()
     }
 
+    @Transient private var _cachedSources: [SoundSource]?
+    @Transient private var _cachedSourcesData: Data?
+
     var sources: [SoundSource] {
-        get { (try? JSONDecoder().decode([SoundSource].self, from: sourcesData)) ?? [] }
-        set { sourcesData = (try? JSONEncoder().encode(newValue)) ?? Data() }
+        get {
+            if _cachedSourcesData == sourcesData, let cached = _cachedSources {
+                return cached
+            }
+            let decoded = (try? JSONDecoder().decode([SoundSource].self, from: sourcesData)) ?? []
+            _cachedSources = decoded
+            _cachedSourcesData = sourcesData
+            return decoded
+        }
+        set {
+            sourcesData = (try? JSONEncoder().encode(newValue)) ?? Data()
+            _cachedSources = newValue
+            _cachedSourcesData = sourcesData
+        }
     }
 
     func toPreset() -> Preset {

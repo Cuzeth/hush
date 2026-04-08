@@ -168,7 +168,7 @@ struct TimerView: View {
                         .monospacedDigit()
                 }
 
-                Stepper(value: $customMinutes, in: 1...180, step: 5) {
+                Stepper(value: $customMinutes, in: 1...180, step: 1) {
                     Text("Adjust duration")
                         .foregroundStyle(HushPalette.textSecondary)
                 }

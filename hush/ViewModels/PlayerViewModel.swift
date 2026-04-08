@@ -1,7 +1,7 @@
 import SwiftUI
 import SwiftData
 import AudioToolbox
-import UserNotifications
+@preconcurrency import UserNotifications
 
 @MainActor
 @Observable
@@ -239,9 +239,24 @@ final class PlayerViewModel {
     private static let timerNotificationID = "hush.timer.expired"
 
     private func scheduleTimerNotification(duration: TimeInterval) {
-        let center = UNUserNotificationCenter.current()
-        center.requestAuthorization(options: [.alert, .sound]) { _, _ in }
+        Task {
+            let center = UNUserNotificationCenter.current()
+            let settings = await center.notificationSettings()
+            switch settings.authorizationStatus {
+            case .notDetermined:
+                let granted = (try? await center.requestAuthorization(options: [.alert, .sound])) ?? false
+                if granted {
+                    postTimerNotification(duration: duration)
+                }
+            case .authorized, .provisional, .ephemeral:
+                postTimerNotification(duration: duration)
+            default:
+                break
+            }
+        }
+    }
 
+    private func postTimerNotification(duration: TimeInterval) {
         let content = UNMutableNotificationContent()
         content.title = "Focus session complete"
         content.body = "Your Hush timer has finished. Nice work."
@@ -249,7 +264,7 @@ final class PlayerViewModel {
 
         let trigger = UNTimeIntervalNotificationTrigger(timeInterval: max(1, duration), repeats: false)
         let request = UNNotificationRequest(identifier: Self.timerNotificationID, content: content, trigger: trigger)
-        center.add(request)
+        UNUserNotificationCenter.current().add(request)
     }
 
     private func cancelTimerNotification() {
@@ -259,9 +274,18 @@ final class PlayerViewModel {
 
     // MARK: - Preset Persistence
 
-    func saveCurrentAsPreset(name: String, context: ModelContext) {
-        let saved = SavedPreset(name: name, icon: "star.fill", sources: activeSources)
+    func saveCurrentAsPreset(name: String, icon: String, context: ModelContext) {
+        let saved = SavedPreset(name: name, icon: icon, sources: activeSources)
         context.insert(saved)
+    }
+
+    // MARK: - Engine Passthrough
+
+    var actualSampleRate: Double { engine.actualSampleRate }
+    var headphonesConnected: Bool { AudioEngine.headphonesConnected }
+
+    func setBinauralCarrier(_ frequency: Float) {
+        engine.setDefaultBinauralCarrier(frequency)
     }
 
     // MARK: - Last Session
@@ -322,7 +346,6 @@ final class PlayerViewModel {
             return
         }
 
-        persistTimerState()
         applyTimerFadeIfNeeded()
     }
 

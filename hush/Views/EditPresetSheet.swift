@@ -10,11 +10,6 @@ struct EditPresetSheet: View {
     @State private var sources: [SoundSource]
     @State private var showAddSound = false
 
-    private let columns = [
-        GridItem(.flexible(), spacing: 14),
-        GridItem(.flexible(), spacing: 14)
-    ]
-
     init(preset: Preset, onSave: @escaping (Preset, [SoundSource]) -> Void) {
         self.preset = preset
         self.onSave = onSave
@@ -80,9 +75,17 @@ struct EditPresetSheet: View {
         }
         .tint(HushPalette.accentSoft)
         .sheet(isPresented: $showAddSound) {
-            EditAddSoundSheet(sources: $sources)
-                .presentationDetents([.medium, .large])
-                .presentationDragIndicator(.visible)
+            SoundPickerGrid(activeSources: sources) { type in
+                var source = SoundSource(type: type, volume: 0.5)
+                if type == .pureTone || type == .drone {
+                    source.toneFrequency = TonePreset.hz432.frequency
+                }
+                withAnimation(.easeInOut(duration: 0.3)) {
+                    sources.append(source)
+                }
+            }
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
         }
     }
 }
@@ -116,7 +119,7 @@ private struct EditSourceRow: View {
                     Text(source.type.rawValue)
                         .font(.headline)
                         .foregroundStyle(HushPalette.textPrimary)
-                    Text(subtitle)
+                    Text(source.subtitle)
                         .font(.caption)
                         .foregroundStyle(HushPalette.textSecondary)
                 }
@@ -150,21 +153,17 @@ private struct EditSourceRow: View {
             if source.type == .pureTone || source.type == .drone {
                 EditToneFrequencyPicker(source: source, sources: $sources)
             }
+
+            if isBinauralType {
+                EditBinauralRangePicker(source: source, sources: $sources)
+            }
         }
         .padding(18)
         .hushPanel(radius: 26, fill: HushPalette.surface.opacity(0.94))
     }
 
-    private var subtitle: String {
-        switch source.type {
-        case .binauralBeats, .isochronicTones, .monauralBeats:
-            return source.binauralRange?.description ?? "Realtime generator"
-        case .pureTone, .drone:
-            if let freq = source.toneFrequency { return "\(Int(freq)) Hz" }
-            return "432 Hz"
-        default:
-            return source.type.isGenerated ? "Realtime generator" : "Looped ambience"
-        }
+    private var isBinauralType: Bool {
+        [.binauralBeats, .isochronicTones, .monauralBeats].contains(source.type)
     }
 }
 
@@ -201,101 +200,32 @@ private struct EditToneFrequencyPicker: View {
     }
 }
 
-// MARK: - Add Sound Sheet (local, adds to binding)
+// MARK: - Binaural Range Picker (local)
 
-private struct EditAddSoundSheet: View {
+private struct EditBinauralRangePicker: View {
+    let source: SoundSource
     @Binding var sources: [SoundSource]
-    @Environment(\.dismiss) private var dismiss
-
-    private let columns = [
-        GridItem(.flexible(), spacing: 14),
-        GridItem(.flexible(), spacing: 14)
-    ]
-
-    private var available: [SoundType] {
-        let activeTypes = Set(sources.map(\.type))
-        return SoundType.allCases.filter { !activeTypes.contains($0) }
-    }
 
     var body: some View {
-        NavigationStack {
-            ZStack {
-                HushBackdrop()
-
-                ScrollView(showsIndicators: false) {
-                    VStack(alignment: .leading, spacing: 24) {
-                        soundSection(
-                            title: "Generated",
-                            subtitle: "Realtime DSP layers",
-                            sounds: available.filter(\.isGenerated)
-                        )
-                        soundSection(
-                            title: "Nature",
-                            subtitle: "Looped ambient recordings",
-                            sounds: available.filter { !$0.isGenerated }
-                        )
-                    }
-                    .padding(.horizontal, 20)
-                    .padding(.top, 16)
-                    .padding(.bottom, 28)
-                }
-            }
-            .navigationTitle("Add Sound")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Done") { dismiss() }
-                        .foregroundStyle(HushPalette.textPrimary)
-                }
-            }
-        }
-        .tint(HushPalette.accentSoft)
-    }
-
-    @ViewBuilder
-    private func soundSection(title: String, subtitle: String, sounds: [SoundType]) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(title)
-                    .font(.system(size: 24, weight: .semibold, design: .serif))
-                    .foregroundStyle(HushPalette.textPrimary)
-                Text(subtitle)
-                    .font(.subheadline)
-                    .foregroundStyle(HushPalette.textSecondary)
-            }
-
-            LazyVGrid(columns: columns, spacing: 14) {
-                ForEach(sounds) { type in
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(BinauralRange.allCases) { range in
+                    let isSelected = source.binauralRange == range
                     Button {
-                        var source = SoundSource(type: type, volume: 0.5)
-                        if type == .pureTone || type == .drone {
-                            source.toneFrequency = TonePreset.hz432.frequency
+                        if let idx = sources.firstIndex(where: { $0.id == source.id }) {
+                            sources[idx].binauralRange = range
+                            sources[idx].binauralFrequency = range.defaultFrequency
                         }
-                        withAnimation(.easeInOut(duration: 0.3)) {
-                            sources.append(source)
-                        }
-                        dismiss()
                     } label: {
-                        VStack(alignment: .leading, spacing: 14) {
-                            ZStack {
-                                Circle()
-                                    .fill(HushPalette.surfaceRaised.opacity(0.92))
-                                    .frame(width: 42, height: 42)
-                                Image(systemName: type.icon)
-                                    .font(.headline)
-                                    .foregroundStyle(HushPalette.textPrimary)
-                            }
-                            Text(type.rawValue)
-                                .font(.headline)
-                                .foregroundStyle(HushPalette.textPrimary)
-                                .multilineTextAlignment(.leading)
-                            Text(type.isGenerated ? "Synthetic" : "Recorded")
-                                .font(.caption)
-                                .foregroundStyle(HushPalette.textSecondary)
-                        }
-                        .frame(maxWidth: .infinity, minHeight: 142, alignment: .leading)
-                        .padding(16)
-                        .hushPanel(radius: 26, fill: HushPalette.surface.opacity(0.94))
+                        Text(range.rawValue)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(isSelected ? HushPalette.textPrimary : HushPalette.textSecondary)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 7)
+                            .background(
+                                Capsule()
+                                    .fill(isSelected ? HushPalette.accentSoft.opacity(0.3) : HushPalette.surfaceRaised.opacity(0.6))
+                            )
                     }
                     .buttonStyle(.plain)
                 }

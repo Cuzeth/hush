@@ -1,9 +1,12 @@
 import SwiftUI
+import AVFoundation
 
 struct SettingsView: View {
     @AppStorage("autoResumeLast") private var autoResumeLast = false
     @AppStorage("fadeDuration") private var fadeDuration: Double = 0.5
     @AppStorage("binauralCarrier") private var binauralCarrier: Double = 200
+
+    @State private var headphonesConnected = AudioEngine.headphonesConnected
 
     @Environment(\.dismiss) private var dismiss
 
@@ -29,6 +32,14 @@ struct SettingsView: View {
                         }
                     }
 
+                    Section("Presets") {
+                        Button("Restore Built-In Presets") {
+                            UserDefaults.standard.removeObject(forKey: "hiddenBuiltInPresets")
+                            UserDefaults.standard.removeObject(forKey: "renamedBuiltInPresets")
+                        }
+                        .foregroundStyle(HushPalette.accentSoft)
+                    }
+
                     Section("Tones") {
                         VStack(alignment: .leading) {
                             HStack {
@@ -48,9 +59,9 @@ struct SettingsView: View {
                         HStack {
                             Image(systemName: "headphones")
                                 .foregroundStyle(HushPalette.textSecondary)
-                            Text(AudioEngine.headphonesConnected ? "Headphones connected" : "No headphones detected")
+                            Text(headphonesConnected ? "Headphones connected" : "No headphones detected")
                                 .font(.subheadline)
-                                .foregroundStyle(AudioEngine.headphonesConnected ? HushPalette.accentSoft : HushPalette.textSecondary)
+                                .foregroundStyle(headphonesConnected ? HushPalette.accentSoft : HushPalette.textSecondary)
                         }
                     }
 
@@ -94,6 +105,9 @@ struct SettingsView: View {
                 .listStyle(.insetGrouped)
                 .foregroundStyle(HushPalette.textPrimary)
                 .tint(HushPalette.accentSoft)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: AVAudioSession.routeChangeNotification)) { _ in
+                headphonesConnected = AudioEngine.headphonesConnected
             }
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)

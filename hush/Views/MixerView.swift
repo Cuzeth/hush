@@ -1,8 +1,21 @@
 import SwiftUI
 
+extension SoundSource {
+    var subtitle: String {
+        switch type {
+        case .binauralBeats, .isochronicTones, .monauralBeats:
+            return binauralRange?.description ?? "Realtime generator"
+        case .pureTone, .drone:
+            if let freq = toneFrequency { return "\(Int(freq)) Hz" }
+            return "432 Hz"
+        default:
+            return type.isGenerated ? "Realtime generator" : "Looped ambience"
+        }
+    }
+}
+
 struct MixerView: View {
     @Bindable var viewModel: PlayerViewModel
-    @State private var mixerVM = MixerViewModel()
     @State private var showAddSound = false
 
     var body: some View {
@@ -57,9 +70,11 @@ struct MixerView: View {
             }
         }
         .sheet(isPresented: $showAddSound) {
-            AddSoundSheet(viewModel: viewModel, mixerVM: mixerVM)
-                .presentationDetents([.medium, .large])
-                .presentationDragIndicator(.visible)
+            SoundPickerGrid(activeSources: viewModel.activeSources) { type in
+                viewModel.addSource(type)
+            }
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
         }
     }
 }
@@ -93,7 +108,7 @@ private struct SourceRow: View {
                         .font(.headline)
                         .foregroundStyle(HushPalette.textPrimary)
 
-                    Text(sourceSubtitle)
+                    Text(source.subtitle)
                         .font(.caption)
                         .foregroundStyle(HushPalette.textSecondary)
                 }
@@ -115,11 +130,7 @@ private struct SourceRow: View {
                 .accessibilityLabel("Remove \(source.type.rawValue)")
             }
 
-            Slider(value: $volume, in: 0...1) { editing in
-                if !editing {
-                    viewModel.updateVolume(for: source, volume: volume)
-                }
-            }
+            Slider(value: $volume, in: 0...1)
             .tint(HushPalette.accentSoft)
             .onChange(of: volume) {
                 viewModel.updateVolume(for: source, volume: volume)
@@ -130,6 +141,10 @@ private struct SourceRow: View {
             if isToneType {
                 ToneFrequencyPicker(source: source, viewModel: viewModel)
             }
+
+            if isBinauralType {
+                BinauralRangePicker(source: source, viewModel: viewModel)
+            }
         }
         .padding(18)
         .hushPanel(radius: 26, fill: HushPalette.surface.opacity(0.94))
@@ -139,27 +154,14 @@ private struct SourceRow: View {
         source.type == .pureTone || source.type == .drone
     }
 
-    private var sourceSubtitle: String {
-        switch source.type {
-        case .binauralBeats, .isochronicTones, .monauralBeats:
-            if let range = source.binauralRange {
-                return range.description
-            }
-            return "Realtime generator"
-        case .pureTone, .drone:
-            if let freq = source.toneFrequency {
-                return "\(Int(freq)) Hz"
-            }
-            return "432 Hz"
-        default:
-            return source.type.isGenerated ? "Realtime generator" : "Looped ambience"
-        }
+    private var isBinauralType: Bool {
+        [.binauralBeats, .isochronicTones, .monauralBeats].contains(source.type)
     }
 }
 
-private struct AddSoundSheet: View {
-    let viewModel: PlayerViewModel
-    let mixerVM: MixerViewModel
+struct SoundPickerGrid: View {
+    let activeSources: [SoundSource]
+    let onSelect: (SoundType) -> Void
 
     @Environment(\.dismiss) private var dismiss
 
@@ -168,14 +170,17 @@ private struct AddSoundSheet: View {
         GridItem(.flexible(), spacing: 14)
     ]
 
+    private var available: [SoundType] {
+        let activeTypes = Set(activeSources.map(\.type))
+        return SoundType.allCases.filter { !activeTypes.contains($0) }
+    }
+
     var body: some View {
         NavigationStack {
             ZStack {
                 HushBackdrop()
 
                 ScrollView(showsIndicators: false) {
-                    let available = mixerVM.soundsNotInMix(activeSources: viewModel.activeSources)
-
                     VStack(alignment: .leading, spacing: 24) {
                         soundSection(
                             title: "Generated",
@@ -222,7 +227,7 @@ private struct AddSoundSheet: View {
             LazyVGrid(columns: columns, spacing: 14) {
                 ForEach(sounds) { type in
                     Button {
-                        viewModel.addSource(type)
+                        onSelect(type)
                         dismiss()
                     } label: {
                         VStack(alignment: .leading, spacing: 14) {
@@ -248,6 +253,35 @@ private struct AddSoundSheet: View {
                         .frame(maxWidth: .infinity, minHeight: 142, alignment: .leading)
                         .padding(16)
                         .hushPanel(radius: 26, fill: HushPalette.surface.opacity(0.94))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+}
+
+struct BinauralRangePicker: View {
+    let source: SoundSource
+    let viewModel: PlayerViewModel
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(BinauralRange.allCases) { range in
+                    let isSelected = source.binauralRange == range
+                    Button {
+                        viewModel.updateBinaural(for: source, range: range, frequency: range.defaultFrequency)
+                    } label: {
+                        Text(range.rawValue)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(isSelected ? HushPalette.textPrimary : HushPalette.textSecondary)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 7)
+                            .background(
+                                Capsule()
+                                    .fill(isSelected ? HushPalette.accentSoft.opacity(0.3) : HushPalette.surfaceRaised.opacity(0.6))
+                            )
                     }
                     .buttonStyle(.plain)
                 }

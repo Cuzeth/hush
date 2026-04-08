@@ -143,6 +143,7 @@ struct PlayerView: View {
 
                 if viewModel.isPlaying {
                     HushInfoPill(icon: "waveform", text: "Playing", highlighted: true)
+                        .accessibilityLabel("Now playing")
                         .transition(.opacity.combined(with: .scale(scale: 0.92)))
                 }
             }
@@ -298,9 +299,7 @@ struct PlayerView: View {
     }
 
     private var sourcesSummary: String {
-        let names = viewModel.activeSources.map(\.type.rawValue)
-        if names.count <= 2 { return names.joined(separator: " + ") }
-        return "\(names[0]) + \(names[1]) + \(names.count - 2) more"
+        soundSourceSummary(viewModel.activeSources)
     }
 
     private var activePalette: [Color] {

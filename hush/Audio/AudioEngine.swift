@@ -381,8 +381,8 @@ final class AudioEngine: @unchecked Sendable {
     }
 
     private func removeAllAttachedSources() {
-        let allIDs = Array(Set(Array(sourceNodes.keys) + Array(playerNodes.keys)))
-        for id in allIDs { removeAttachedSource(id: id) }
+        for id in Array(sourceNodes.keys) { removeAttachedSource(id: id) }
+        for id in Array(playerNodes.keys) { removeAttachedSource(id: id) }
     }
 
     func setVolume(_ volume: Float, for id: UUID) {
@@ -471,6 +471,7 @@ final class AudioEngine: @unchecked Sendable {
             guard let self else { return }
             self.pauseAllPlayerNodes()
             self.engine.stop()
+            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
             self.clearNowPlaying()
         }
     }
@@ -595,7 +596,8 @@ final class AudioEngine: @unchecked Sendable {
             if let freq = toneFrequency { gen.frequency = freq }
             return gen
         default:
-            fatalError("Use addSampleSource for non-generated types")
+            assertionFailure("Use addSampleSource for non-generated types")
+            return WhiteNoiseGenerator(sampleRate: actualSampleRate)
         }
     }
 
