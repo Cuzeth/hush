@@ -4,6 +4,7 @@ import SwiftData
 struct PresetSelector: View {
     let onSelect: (Preset) -> Void
     let onRandom: () -> Void
+    let onDelete: (Preset) -> Void
     var selectedPreset: Preset?
 
     @Query(sort: \SavedPreset.createdAt, order: .reverse)
@@ -11,11 +12,32 @@ struct PresetSelector: View {
 
     @Environment(\.modelContext) private var modelContext
 
-    @State private var editingPreset: SavedPreset?
+    @State private var editingPreset: EditTarget?
     @State private var editName = ""
 
-    private var allPresets: [Preset] {
-        Preset.builtIn + savedPresets.map { $0.toPreset() }
+    // Track which built-in presets the user has hidden or renamed
+    @AppStorage("hiddenBuiltInPresets") private var hiddenBuiltInData = Data()
+    @AppStorage("renamedBuiltInPresets") private var renamedBuiltInData = Data()
+
+    private var hiddenBuiltInIDs: Set<UUID> {
+        get { (try? JSONDecoder().decode(Set<UUID>.self, from: hiddenBuiltInData)) ?? [] }
+    }
+
+    private var renamedBuiltIns: [UUID: String] {
+        get { (try? JSONDecoder().decode([UUID: String].self, from: renamedBuiltInData)) ?? [:] }
+    }
+
+    private var visibleBuiltIns: [Preset] {
+        Preset.builtIn
+            .filter { !hiddenBuiltInIDs.contains($0.id) }
+            .map { preset in
+                if let newName = renamedBuiltIns[preset.id] {
+                    var p = preset
+                    p.name = newName
+                    return p
+                }
+                return preset
+            }
     }
 
     var body: some View {
@@ -25,7 +47,6 @@ struct PresetSelector: View {
                 .foregroundStyle(HushPalette.textPrimary)
                 .padding(.horizontal, 4)
 
-            // Random mix row
             Button(action: onRandom) {
                 presetRow(
                     icon: "dice.fill",
@@ -36,8 +57,8 @@ struct PresetSelector: View {
             }
             .buttonStyle(.plain)
 
-            // Built-in preset rows
-            ForEach(Preset.builtIn) { preset in
+            // Built-in presets (with rename/delete via context menu)
+            ForEach(visibleBuiltIns) { preset in
                 let selected = selectedPreset?.id == preset.id
                 Button { onSelect(preset) } label: {
                     presetRow(
@@ -48,9 +69,23 @@ struct PresetSelector: View {
                     )
                 }
                 .buttonStyle(.plain)
+                .contextMenu {
+                    Button {
+                        editName = preset.name
+                        editingPreset = .builtIn(preset)
+                    } label: {
+                        Label("Rename", systemImage: "pencil")
+                    }
+                    Button(role: .destructive) {
+                        hideBuiltIn(preset)
+                        onDelete(preset)
+                    } label: {
+                        Label("Delete", systemImage: "trash")
+                    }
+                }
             }
 
-            // Saved preset rows with edit/delete
+            // Saved presets
             ForEach(savedPresets) { saved in
                 let preset = saved.toPreset()
                 let selected = selectedPreset?.id == preset.id
@@ -66,12 +101,14 @@ struct PresetSelector: View {
                 .contextMenu {
                     Button {
                         editName = saved.name
-                        editingPreset = saved
+                        editingPreset = .saved(saved)
                     } label: {
                         Label("Rename", systemImage: "pencil")
                     }
                     Button(role: .destructive) {
-                        deletePreset(saved)
+                        let p = saved.toPreset()
+                        deleteSaved(saved)
+                        onDelete(p)
                     } label: {
                         Label("Delete", systemImage: "trash")
                     }
@@ -84,8 +121,14 @@ struct PresetSelector: View {
         )) {
             TextField("Name", text: $editName)
             Button("Save") {
-                if let preset = editingPreset, !editName.isEmpty {
-                    preset.name = editName
+                guard !editName.isEmpty else { editingPreset = nil; return }
+                switch editingPreset {
+                case .builtIn(let preset):
+                    renameBuiltIn(preset, to: editName)
+                case .saved(let saved):
+                    saved.name = editName
+                case .none:
+                    break
                 }
                 editingPreset = nil
             }
@@ -95,11 +138,27 @@ struct PresetSelector: View {
         }
     }
 
-    private func deletePreset(_ saved: SavedPreset) {
+    // MARK: - Built-in Preset Mutations (stored in UserDefaults)
+
+    private func hideBuiltIn(_ preset: Preset) {
+        var hidden = hiddenBuiltInIDs
+        hidden.insert(preset.id)
+        hiddenBuiltInData = (try? JSONEncoder().encode(hidden)) ?? Data()
+    }
+
+    private func renameBuiltIn(_ preset: Preset, to name: String) {
+        var renamed = renamedBuiltIns
+        renamed[preset.id] = name
+        renamedBuiltInData = (try? JSONEncoder().encode(renamed)) ?? Data()
+    }
+
+    private func deleteSaved(_ saved: SavedPreset) {
         withAnimation(.easeInOut(duration: 0.3)) {
             modelContext.delete(saved)
         }
     }
+
+    // MARK: - Row
 
     private func presetRow(icon: String, name: String, detail: String, isSelected: Bool) -> some View {
         HStack(spacing: 14) {
@@ -151,4 +210,9 @@ struct PresetSelector: View {
         if names.count <= 2 { return names.joined(separator: " + ") }
         return "\(names[0]) + \(names[1]) + \(names.count - 2) more"
     }
+}
+
+private enum EditTarget {
+    case builtIn(Preset)
+    case saved(SavedPreset)
 }

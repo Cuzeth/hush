@@ -24,6 +24,7 @@ struct PlayerView: View {
                     PresetSelector(
                         onSelect: { preset in viewModel.loadPreset(preset) },
                         onRandom: { viewModel.randomMix() },
+                        onDelete: { preset in viewModel.handlePresetDeleted(preset) },
                         selectedPreset: viewModel.currentPreset
                     )
                     mixerSection

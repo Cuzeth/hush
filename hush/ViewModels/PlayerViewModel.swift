@@ -81,7 +81,8 @@ final class PlayerViewModel {
     }
 
     func cyclePreset(forward: Bool) {
-        let presets = Preset.builtIn
+        let hidden = Self.hiddenBuiltInIDs
+        let presets = Preset.builtIn.filter { !hidden.contains($0.id) }
         guard !presets.isEmpty else { return }
 
         let currentIdx = currentPreset.flatMap { cp in
@@ -96,6 +97,19 @@ final class PlayerViewModel {
             nextIdx = forward ? 0 : presets.count - 1
         }
         loadPreset(presets[nextIdx])
+    }
+
+    func handlePresetDeleted(_ preset: Preset) {
+        if currentPreset?.id == preset.id {
+            withAnimation(.easeInOut(duration: 0.35)) {
+                currentPreset = nil
+            }
+        }
+    }
+
+    private static var hiddenBuiltInIDs: Set<UUID> {
+        guard let data = UserDefaults.standard.data(forKey: "hiddenBuiltInPresets") else { return [] }
+        return (try? JSONDecoder().decode(Set<UUID>.self, from: data)) ?? []
     }
 
     // MARK: - Source Management
