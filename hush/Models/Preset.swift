@@ -55,6 +55,16 @@ struct Preset: Identifiable, Codable {
                 SoundSource(type: .wind, volume: 0.35)
             ],
             isBuiltIn: true
+        ),
+        Preset(
+            name: "Gamma Focus",
+            icon: "bolt.trianglebadge.exclamationmark.fill",
+            sources: [
+                SoundSource(type: .isochronicTones, volume: 0.35,
+                            binauralRange: .gamma, binauralFrequency: 40),
+                SoundSource(type: .brownNoise, volume: 0.5)
+            ],
+            isBuiltIn: true
         )
     ]
 }

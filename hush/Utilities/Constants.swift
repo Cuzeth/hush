@@ -52,6 +52,10 @@ enum SoundType: String, Codable, CaseIterable, Identifiable {
     case brownNoise = "Brown Noise"
     case grayNoise = "Gray Noise"
     case binauralBeats = "Binaural Beats"
+    case isochronicTones = "Isochronic Tones"
+    case monauralBeats = "Monaural Beats"
+    case pureTone = "Pure Tone"
+    case drone = "Drone"
     case rain = "Rain"
     case ocean = "Ocean"
     case thunder = "Thunder"
@@ -69,6 +73,10 @@ enum SoundType: String, Codable, CaseIterable, Identifiable {
         case .brownNoise: return "water.waves"
         case .grayNoise: return "circle.hexagongrid"
         case .binauralBeats: return "headphones"
+        case .isochronicTones: return "metronome.fill"
+        case .monauralBeats: return "speaker.wave.2"
+        case .pureTone: return "tuningfork"
+        case .drone: return "waveform.circle"
         case .rain: return "cloud.rain"
         case .ocean: return "tropicalstorm"
         case .thunder: return "cloud.bolt"
@@ -81,7 +89,9 @@ enum SoundType: String, Codable, CaseIterable, Identifiable {
 
     nonisolated var isGenerated: Bool {
         switch self {
-        case .whiteNoise, .pinkNoise, .brownNoise, .grayNoise, .binauralBeats:
+        case .whiteNoise, .pinkNoise, .brownNoise, .grayNoise,
+             .binauralBeats, .isochronicTones, .monauralBeats,
+             .pureTone, .drone:
             return true
         default:
             return false
@@ -100,6 +110,34 @@ enum SoundType: String, Codable, CaseIterable, Identifiable {
         default: return nil
         }
     }
+}
+
+enum TonePreset: String, CaseIterable, Identifiable, Codable {
+    case hz174 = "174 Hz"
+    case hz285 = "285 Hz"
+    case hz396 = "396 Hz"
+    case hz432 = "432 Hz"
+    case hz528 = "528 Hz"
+    case hz639 = "639 Hz"
+    case hz741 = "741 Hz"
+    case hz852 = "852 Hz"
+
+    nonisolated var id: String { rawValue }
+
+    nonisolated var frequency: Float {
+        switch self {
+        case .hz174: return 174
+        case .hz285: return 285
+        case .hz396: return 396
+        case .hz432: return 432
+        case .hz528: return 528
+        case .hz639: return 639
+        case .hz741: return 741
+        case .hz852: return 852
+        }
+    }
+
+    nonisolated var label: String { rawValue }
 }
 
 enum TimerDuration: Int, CaseIterable, Identifiable {

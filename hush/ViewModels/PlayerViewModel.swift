@@ -66,7 +66,8 @@ final class PlayerViewModel {
 
     func randomMix() {
         stop()
-        let allTypes = SoundType.allCases.filter { $0 != .binauralBeats }
+        let toneTypes: Set<SoundType> = [.binauralBeats, .isochronicTones, .monauralBeats, .pureTone, .drone]
+        let allTypes = SoundType.allCases.filter { !toneTypes.contains($0) }
         let count = Int.random(in: 2...3)
         let selected = allTypes.shuffled().prefix(count)
         withAnimation(.easeInOut(duration: 0.35)) {
@@ -101,7 +102,12 @@ final class PlayerViewModel {
 
     func addSource(_ type: SoundType) {
         guard activeSources.count < AudioConstants.maxSimultaneousSources else { return }
-        let source = SoundSource(type: type, volume: 0.5)
+
+        var source = SoundSource(type: type, volume: 0.5)
+        if type == .pureTone || type == .drone {
+            source.toneFrequency = TonePreset.hz432.frequency
+        }
+
         withAnimation(.easeInOut(duration: 0.3)) {
             activeSources.append(source)
         }
@@ -113,7 +119,8 @@ final class PlayerViewModel {
         if isPlaying {
             engine.addSource(id: source.id, type: source.type, volume: source.volume,
                            binauralRange: source.binauralRange,
-                           binauralFrequency: source.binauralFrequency)
+                           binauralFrequency: source.binauralFrequency,
+                           toneFrequency: source.toneFrequency)
         }
     }
 
@@ -135,6 +142,12 @@ final class PlayerViewModel {
         if let range { activeSources[idx].binauralRange = range }
         if let freq = frequency { activeSources[idx].binauralFrequency = freq }
         engine.updateBinauralParameters(for: source.id, range: range, frequency: frequency)
+    }
+
+    func updateToneFrequency(for source: SoundSource, frequency: Float) {
+        guard let idx = activeSources.firstIndex(where: { $0.id == source.id }) else { return }
+        activeSources[idx].toneFrequency = frequency
+        engine.updateToneFrequency(for: source.id, frequency: frequency)
     }
 
     // MARK: - Playback
@@ -166,7 +179,8 @@ final class PlayerViewModel {
         for source in activeSources where source.isActive {
             engine.addSource(id: source.id, type: source.type, volume: source.volume,
                            binauralRange: source.binauralRange,
-                           binauralFrequency: source.binauralFrequency)
+                           binauralFrequency: source.binauralFrequency,
+                           toneFrequency: source.toneFrequency)
         }
     }
 

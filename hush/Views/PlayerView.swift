@@ -311,7 +311,7 @@ struct PlayerView: View {
             return [Color(red: 0.28, green: 0.40, blue: 0.31), Color(red: 0.12, green: 0.18, blue: 0.15)]
         case .fire, .thunder:
             return [Color(red: 0.44, green: 0.27, blue: 0.18), Color(red: 0.18, green: 0.11, blue: 0.10)]
-        case .binauralBeats:
+        case .binauralBeats, .isochronicTones, .monauralBeats, .pureTone, .drone:
             return [Color(red: 0.31, green: 0.25, blue: 0.44), Color(red: 0.16, green: 0.12, blue: 0.23)]
         case .whiteNoise, .pinkNoise, .brownNoise, .grayNoise:
             return [Color(red: 0.33, green: 0.32, blue: 0.28), Color(red: 0.16, green: 0.15, blue: 0.13)]

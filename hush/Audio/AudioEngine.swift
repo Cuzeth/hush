@@ -13,6 +13,7 @@ final class AudioEngine: @unchecked Sendable {
         var volume: Float
         var binauralRange: BinauralRange?
         var binauralFrequency: Float?
+        var toneFrequency: Float?
     }
 
     private static let fadeDurationKey = "fadeDuration"
@@ -261,12 +262,14 @@ final class AudioEngine: @unchecked Sendable {
 
     func addSource(id: UUID, type: SoundType, volume: Float,
                    binauralRange: BinauralRange? = nil,
-                   binauralFrequency: Float? = nil) {
+                   binauralFrequency: Float? = nil,
+                   toneFrequency: Float? = nil) {
         let config = SourceConfiguration(
             type: type,
             volume: volume,
             binauralRange: binauralRange,
-            binauralFrequency: binauralFrequency
+            binauralFrequency: binauralFrequency,
+            toneFrequency: toneFrequency
         )
 
         sourceConfigurations[id] = config
@@ -286,7 +289,8 @@ final class AudioEngine: @unchecked Sendable {
         let generator = makeGenerator(
             for: config.type,
             binauralRange: config.binauralRange,
-            binauralFrequency: config.binauralFrequency
+            binauralFrequency: config.binauralFrequency,
+            toneFrequency: config.toneFrequency
         )
         generator.volume = config.volume
         generators[id] = generator
@@ -399,15 +403,40 @@ final class AudioEngine: @unchecked Sendable {
             sourceConfigurations[id] = config
         }
 
-        guard let gen = generators[id] as? BinauralBeatGenerator else { return }
-        if let range { gen.setRange(range) }
-        if let freq = frequency { gen.beatFrequency = freq }
+        if let gen = generators[id] as? BinauralBeatGenerator {
+            if let range { gen.setRange(range) }
+            if let freq = frequency { gen.beatFrequency = freq }
+        } else if let gen = generators[id] as? IsochronicToneGenerator {
+            if let range { gen.setRange(range) }
+            if let freq = frequency { gen.pulseRate = freq }
+        } else if let gen = generators[id] as? MonauralBeatGenerator {
+            if let range { gen.setRange(range) }
+            if let freq = frequency { gen.beatFrequency = freq }
+        }
     }
 
     func setDefaultBinauralCarrier(_ frequency: Float) {
         for generator in generators.values {
-            guard let binaural = generator as? BinauralBeatGenerator else { continue }
-            binaural.carrierFrequency = frequency
+            if let binaural = generator as? BinauralBeatGenerator {
+                binaural.carrierFrequency = frequency
+            } else if let isochronic = generator as? IsochronicToneGenerator {
+                isochronic.carrierFrequency = frequency
+            } else if let monaural = generator as? MonauralBeatGenerator {
+                monaural.carrierFrequency = frequency
+            }
+        }
+    }
+
+    func updateToneFrequency(for id: UUID, frequency: Float) {
+        if var config = sourceConfigurations[id] {
+            config.toneFrequency = frequency
+            sourceConfigurations[id] = config
+        }
+
+        if let gen = generators[id] as? PureToneGenerator {
+            gen.frequency = frequency
+        } else if let gen = generators[id] as? DroneGenerator {
+            gen.frequency = frequency
         }
     }
 
@@ -528,7 +557,8 @@ final class AudioEngine: @unchecked Sendable {
 
     private func makeGenerator(for type: SoundType,
                                 binauralRange: BinauralRange?,
-                                binauralFrequency: Float?) -> any SoundGenerator {
+                                binauralFrequency: Float?,
+                                toneFrequency: Float? = nil) -> any SoundGenerator {
         switch type {
         case .whiteNoise:
             return WhiteNoiseGenerator(sampleRate: actualSampleRate)
@@ -543,6 +573,26 @@ final class AudioEngine: @unchecked Sendable {
             gen.carrierFrequency = configuredBinauralCarrier
             if let range = binauralRange { gen.setRange(range) }
             if let freq = binauralFrequency { gen.beatFrequency = freq }
+            return gen
+        case .isochronicTones:
+            let gen = IsochronicToneGenerator(sampleRate: actualSampleRate)
+            gen.carrierFrequency = configuredBinauralCarrier
+            if let range = binauralRange { gen.setRange(range) }
+            if let freq = binauralFrequency { gen.pulseRate = freq }
+            return gen
+        case .monauralBeats:
+            let gen = MonauralBeatGenerator(sampleRate: actualSampleRate)
+            gen.carrierFrequency = configuredBinauralCarrier
+            if let range = binauralRange { gen.setRange(range) }
+            if let freq = binauralFrequency { gen.beatFrequency = freq }
+            return gen
+        case .pureTone:
+            let gen = PureToneGenerator(sampleRate: actualSampleRate)
+            if let freq = toneFrequency { gen.frequency = freq }
+            return gen
+        case .drone:
+            let gen = DroneGenerator(sampleRate: actualSampleRate)
+            if let freq = toneFrequency { gen.frequency = freq }
             return gen
         default:
             fatalError("Use addSampleSource for non-generated types")

@@ -126,17 +126,34 @@ private struct SourceRow: View {
             }
             .accessibilityLabel("\(source.type.rawValue) volume")
             .accessibilityValue("\(Int(volume * 100)) percent")
+
+            if isToneType {
+                ToneFrequencyPicker(source: source, viewModel: viewModel)
+            }
         }
         .padding(18)
         .hushPanel(radius: 26, fill: HushPalette.surface.opacity(0.94))
     }
 
-    private var sourceSubtitle: String {
-        if source.type == .binauralBeats, let range = source.binauralRange {
-            return range.description
-        }
+    private var isToneType: Bool {
+        source.type == .pureTone || source.type == .drone
+    }
 
-        return source.type.isGenerated ? "Realtime generator" : "Looped ambience"
+    private var sourceSubtitle: String {
+        switch source.type {
+        case .binauralBeats, .isochronicTones, .monauralBeats:
+            if let range = source.binauralRange {
+                return range.description
+            }
+            return "Realtime generator"
+        case .pureTone, .drone:
+            if let freq = source.toneFrequency {
+                return "\(Int(freq)) Hz"
+            }
+            return "432 Hz"
+        default:
+            return source.type.isGenerated ? "Realtime generator" : "Looped ambience"
+        }
     }
 }
 
@@ -231,6 +248,35 @@ private struct AddSoundSheet: View {
                         .frame(maxWidth: .infinity, minHeight: 142, alignment: .leading)
                         .padding(16)
                         .hushPanel(radius: 26, fill: HushPalette.surface.opacity(0.94))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+}
+
+private struct ToneFrequencyPicker: View {
+    let source: SoundSource
+    let viewModel: PlayerViewModel
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(TonePreset.allCases) { preset in
+                    let isSelected = source.toneFrequency == preset.frequency
+                    Button {
+                        viewModel.updateToneFrequency(for: source, frequency: preset.frequency)
+                    } label: {
+                        Text(preset.label)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(isSelected ? HushPalette.textPrimary : HushPalette.textSecondary)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 7)
+                            .background(
+                                Capsule()
+                                    .fill(isSelected ? HushPalette.accentSoft.opacity(0.3) : HushPalette.surfaceRaised.opacity(0.6))
+                            )
                     }
                     .buttonStyle(.plain)
                 }

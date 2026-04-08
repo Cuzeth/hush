@@ -29,7 +29,7 @@ struct SettingsView: View {
                         }
                     }
 
-                    Section("Binaural Beats") {
+                    Section("Tones") {
                         VStack(alignment: .leading) {
                             HStack {
                                 Text("Carrier frequency")
