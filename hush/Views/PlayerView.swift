@@ -134,6 +134,7 @@ struct PlayerView: View {
                         Text(sourcesSummary)
                             .font(.subheadline)
                             .foregroundStyle(HushPalette.textSecondary)
+                            .transition(.opacity)
                     }
                 }
 
@@ -141,6 +142,7 @@ struct PlayerView: View {
 
                 if viewModel.isPlaying {
                     HushInfoPill(icon: "waveform", text: "Playing", highlighted: true)
+                        .transition(.opacity.combined(with: .scale(scale: 0.92)))
                 }
             }
 
@@ -166,6 +168,7 @@ struct PlayerView: View {
                         }
                     }
                 }
+                .transition(.opacity)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)

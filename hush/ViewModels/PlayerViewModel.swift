@@ -27,13 +27,17 @@ final class PlayerViewModel {
     init() {
         engine.onBinauralHeadphonesDisconnected = { [weak self] in
             guard let self else { return }
-            self.isPlaying = false
+            withAnimation(.easeInOut(duration: 0.35)) {
+                self.isPlaying = false
+            }
             self.showBinauralRouteWarning = true
         }
 
         engine.onPlaybackStateChanged = { [weak self] playing in
             guard let self else { return }
-            self.isPlaying = playing
+            withAnimation(.easeInOut(duration: 0.35)) {
+                self.isPlaying = playing
+            }
         }
 
         engine.onNextPreset = { [weak self] in
@@ -52,8 +56,10 @@ final class PlayerViewModel {
 
     func loadPreset(_ preset: Preset) {
         stop()
-        currentPreset = preset
-        activeSources = preset.sources
+        withAnimation(.easeInOut(duration: 0.35)) {
+            currentPreset = preset
+            activeSources = preset.sources
+        }
         applyCurrentSources()
         play()
     }
@@ -63,10 +69,12 @@ final class PlayerViewModel {
         let allTypes = SoundType.allCases.filter { $0 != .binauralBeats }
         let count = Int.random(in: 2...3)
         let selected = allTypes.shuffled().prefix(count)
-        activeSources = selected.map { type in
-            SoundSource(type: type, volume: Float.random(in: 0.3...0.8))
+        withAnimation(.easeInOut(duration: 0.35)) {
+            activeSources = selected.map { type in
+                SoundSource(type: type, volume: Float.random(in: 0.3...0.8))
+            }
+            currentPreset = nil
         }
-        currentPreset = nil
         applyCurrentSources()
         play()
     }
@@ -94,7 +102,9 @@ final class PlayerViewModel {
     func addSource(_ type: SoundType) {
         guard activeSources.count < AudioConstants.maxSimultaneousSources else { return }
         let source = SoundSource(type: type, volume: 0.5)
-        activeSources.append(source)
+        withAnimation(.easeInOut(duration: 0.3)) {
+            activeSources.append(source)
+        }
 
         if type == .binauralBeats && !AudioEngine.headphonesConnected {
             showHeadphoneWarning = true
@@ -109,7 +119,9 @@ final class PlayerViewModel {
 
     func removeSource(_ source: SoundSource) {
         engine.removeSource(id: source.id)
-        activeSources.removeAll { $0.id == source.id }
+        withAnimation(.easeInOut(duration: 0.3)) {
+            activeSources.removeAll { $0.id == source.id }
+        }
     }
 
     func updateVolume(for source: SoundSource, volume: Float) {
@@ -132,13 +144,17 @@ final class PlayerViewModel {
         applyCurrentSources()
         engine.currentPresetName = currentPreset?.name ?? "Custom Mix"
         engine.start()
-        isPlaying = true
+        withAnimation(.easeInOut(duration: 0.35)) {
+            isPlaying = true
+        }
         applyTimerFadeIfNeeded()
     }
 
     func stop() {
         engine.stop()
-        isPlaying = false
+        withAnimation(.easeInOut(duration: 0.35)) {
+            isPlaying = false
+        }
     }
 
     func togglePlayback() {
