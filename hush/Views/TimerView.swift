@@ -106,8 +106,11 @@ struct TimerView: View {
 
             Toggle("Play chime when done", isOn: Bindable(viewModel.timerState).playChimeOnEnd)
                 .font(.subheadline)
+                .onChange(of: viewModel.timerState.playChimeOnEnd) { _, _ in
+                    viewModel.persistTimerPreferences()
+                }
 
-            Text("Sound fades out over the final 10 seconds")
+            Text("Sound fades out over the final 10 seconds and keeps counting down when the app backgrounds.")
                 .font(.caption)
                 .foregroundStyle(.tertiary)
         }

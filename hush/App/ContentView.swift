@@ -4,6 +4,7 @@ import SwiftData
 struct ContentView: View {
     @State private var viewModel = PlayerViewModel()
     @AppStorage("autoResumeLast") private var autoResumeLast = false
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         PlayerView(viewModel: viewModel)
@@ -13,9 +14,10 @@ struct ContentView: View {
                 if autoResumeLast {
                     _ = viewModel.restoreLastSession()
                 }
+                viewModel.handleScenePhaseChange(.active)
             }
-            .onDisappear {
-                viewModel.saveLastSession()
+            .onChange(of: scenePhase) { _, newPhase in
+                viewModel.handleScenePhaseChange(newPhase)
             }
     }
 }

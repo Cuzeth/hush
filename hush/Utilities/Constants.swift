@@ -3,9 +3,11 @@ import Foundation
 enum AudioConstants {
     nonisolated static let sampleRate: Double = 44100.0
     nonisolated static let defaultFadeDuration: TimeInterval = 0.5
+    nonisolated static let defaultBinauralCarrier: Float = 200
     nonisolated static let timerFadeOutDuration: TimeInterval = 10.0
     nonisolated static let maxSimultaneousSources = 6
     nonisolated static let crossfadeDurationMs: Double = 100.0
+    nonisolated static let preferredIOBufferFrameCount: Double = 2048.0
     nonisolated static var crossfadeSamples: Int { Int(sampleRate * crossfadeDurationMs / 1000.0) }
 }
 

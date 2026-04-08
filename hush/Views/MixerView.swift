@@ -78,6 +78,8 @@ private struct SourceRow: View {
             .onChange(of: volume) {
                 viewModel.updateVolume(for: source, volume: volume)
             }
+            .accessibilityLabel("\(source.type.rawValue) volume")
+            .accessibilityValue("\(Int(volume * 100)) percent")
 
             Button {
                 viewModel.removeSource(source)

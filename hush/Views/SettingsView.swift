@@ -21,6 +21,8 @@ struct SettingsView: View {
                                 .foregroundStyle(.secondary)
                         }
                         Slider(value: $fadeDuration, in: 0.1...2.0, step: 0.1)
+                            .accessibilityLabel("Fade duration")
+                            .accessibilityValue("\(fadeDuration, specifier: "%.1f") seconds")
                     }
                 }
 
@@ -33,6 +35,11 @@ struct SettingsView: View {
                                 .foregroundStyle(.secondary)
                         }
                         Slider(value: $binauralCarrier, in: 100...500, step: 10)
+                            .accessibilityLabel("Binaural carrier frequency")
+                            .accessibilityValue("\(Int(binauralCarrier)) hertz")
+                            .onChange(of: binauralCarrier) { _, newValue in
+                                AudioEngine.shared.setDefaultBinauralCarrier(Float(newValue))
+                            }
                     }
 
                     HStack {
@@ -48,7 +55,7 @@ struct SettingsView: View {
                     HStack {
                         Text("Sample rate")
                         Spacer()
-                        Text("44,100 Hz")
+                        Text("\(Int(AudioEngine.shared.actualSampleRate)) Hz")
                             .foregroundStyle(.secondary)
                     }
                     HStack {
@@ -73,6 +80,9 @@ struct SettingsView: View {
                             .foregroundStyle(.secondary)
                     }
                     Text("Hush generates ADHD-friendly focus sounds using real-time DSP. No accounts, no analytics, no tracking.")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                    Text("Hush is a focus and relaxation aid, not a medical device, and it is not intended to diagnose or treat any condition.")
                         .font(.caption)
                         .foregroundStyle(.tertiary)
                 }

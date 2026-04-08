@@ -93,7 +93,7 @@ final class SampleLoopPlayer: @unchecked Sendable {
             // Pre-bake the crossfade into the buffer
             loopBuffer = prebakeCrossfade(
                 from: convertedBuffer,
-                crossfadeSamples: Int(targetSampleRate * 0.1) // 100ms
+                crossfadeSamples: Int(targetSampleRate * (AudioConstants.crossfadeDurationMs / 1000.0))
             )
             isLoaded = loopBuffer != nil
         } catch {

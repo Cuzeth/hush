@@ -6,6 +6,7 @@ struct PlayerView: View {
     @State private var showSavePreset = false
     @State private var presetName = ""
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         VStack(spacing: 0) {
@@ -32,6 +33,8 @@ struct PlayerView: View {
                     }
                 }
                 .foregroundStyle(.primary)
+                .accessibilityLabel(viewModel.timerState.isRunning ? "Timer running" : "Open timer")
+                .accessibilityValue(viewModel.timerState.isRunning ? viewModel.timerState.displayTime : "Off")
 
                 Button {
                     viewModel.showSettings = true
@@ -82,11 +85,13 @@ struct PlayerView: View {
                         Image(systemName: viewModel.isPlaying ? "pause.fill" : "play.fill")
                             .font(.system(size: 36))
                             .foregroundStyle(Color.accentColor)
-                            .contentTransition(.symbolEffect(.replace))
+                            .contentTransition(reduceMotion ? .identity : .symbolEffect(.replace))
                     }
                 }
                 .buttonStyle(.plain)
                 .disabled(viewModel.activeSources.isEmpty)
+                .accessibilityLabel(viewModel.isPlaying ? "Pause playback" : "Start playback")
+                .accessibilityValue(viewModel.activeSources.isEmpty ? "No sounds selected" : (viewModel.isPlaying ? "Playing" : "Stopped"))
             }
 
             Spacer()
@@ -101,42 +106,55 @@ struct PlayerView: View {
 
             // Mixer toggle
             VStack(spacing: 0) {
-                Button {
-                    withAnimation(.easeInOut(duration: 0.25)) {
-                        viewModel.showMixer.toggle()
-                    }
-                } label: {
-                    HStack {
-                        Text("Mix")
-                            .font(.subheadline.weight(.medium))
-                        Spacer()
-
-                        if !viewModel.activeSources.isEmpty {
-                            // Save preset button
-                            Button {
-                                showSavePreset = true
-                            } label: {
-                                Image(systemName: "square.and.arrow.down")
-                                    .font(.subheadline)
+                HStack(spacing: 12) {
+                    Button {
+                        if reduceMotion {
+                            viewModel.showMixer.toggle()
+                        } else {
+                            withAnimation(.easeInOut(duration: 0.25)) {
+                                viewModel.showMixer.toggle()
                             }
-                            .foregroundStyle(.secondary)
                         }
+                    } label: {
+                        HStack {
+                            Text("Mix")
+                                .font(.subheadline.weight(.medium))
+                            Spacer()
 
-                        Image(systemName: viewModel.showMixer ? "chevron.down" : "chevron.up")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.secondary)
+                            Image(systemName: viewModel.showMixer ? "chevron.down" : "chevron.up")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(.horizontal)
+                        .padding(.vertical, 12)
                     }
-                    .padding(.horizontal)
-                    .padding(.vertical, 12)
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(viewModel.showMixer ? "Hide mixer" : "Show mixer")
+
+                    if !viewModel.activeSources.isEmpty {
+                        Button {
+                            showSavePreset = true
+                        } label: {
+                            Image(systemName: "square.and.arrow.down")
+                                .font(.subheadline)
+                                .padding(.trailing, 16)
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.secondary)
+                        .accessibilityLabel("Save current mix as preset")
+                    }
                 }
-                .buttonStyle(.plain)
 
                 if viewModel.showMixer {
                     Divider()
                         .padding(.horizontal)
                     MixerView(viewModel: viewModel)
                         .padding(.bottom, 8)
-                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                        .transition(
+                            reduceMotion
+                                ? .opacity
+                                : .move(edge: .bottom).combined(with: .opacity)
+                        )
                 }
             }
             .background(Color(.systemGray6).opacity(0.5))

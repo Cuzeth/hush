@@ -6,6 +6,40 @@ final class TimerState {
     var selectedDuration: TimeInterval = TimerDuration.twentyFive.seconds
     var remainingSeconds: TimeInterval = 0
     var playChimeOnEnd = true
+    var endDate: Date?
+
+    func start(duration: TimeInterval, now: Date = .now) {
+        selectedDuration = duration
+        endDate = now.addingTimeInterval(duration)
+        isRunning = true
+        remainingSeconds = duration
+    }
+
+    @discardableResult
+    func syncRemaining(now: Date = .now) -> Bool {
+        guard let endDate else {
+            isRunning = false
+            remainingSeconds = 0
+            return false
+        }
+
+        let remaining = max(0, endDate.timeIntervalSince(now))
+        remainingSeconds = remaining
+
+        if remaining <= 0 {
+            clear()
+            return true
+        }
+
+        isRunning = true
+        return false
+    }
+
+    func clear() {
+        isRunning = false
+        remainingSeconds = 0
+        endDate = nil
+    }
 
     var progress: Double {
         guard selectedDuration > 0 else { return 0 }

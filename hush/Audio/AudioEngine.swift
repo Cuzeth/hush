@@ -8,8 +8,18 @@ import MediaPlayer
 final class AudioEngine: @unchecked Sendable {
     static let shared = AudioEngine()
 
-    private let engine = AVAudioEngine()
-    private let mixerNode = AVAudioMixerNode()
+    private struct SourceConfiguration: Sendable {
+        var type: SoundType
+        var volume: Float
+        var binauralRange: BinauralRange?
+        var binauralFrequency: Float?
+    }
+
+    private static let fadeDurationKey = "fadeDuration"
+    private static let binauralCarrierKey = "binauralCarrier"
+
+    private var engine = AVAudioEngine()
+    private var mixerNode = AVAudioMixerNode()
 
     // Generated sound sources (noise, binaural) — render callbacks
     private var sourceNodes: [UUID: AVAudioSourceNode] = [:]
@@ -18,8 +28,7 @@ final class AudioEngine: @unchecked Sendable {
     // Sample-based sources — AVAudioPlayerNode with pre-baked loop buffers
     private var playerNodes: [UUID: AVAudioPlayerNode] = [:]
     private var samplePlayers: [UUID: SampleLoopPlayer] = [:]
-
-    private var channelVolumes: [UUID: Float] = [:]
+    private var sourceConfigurations: [UUID: SourceConfiguration] = [:]
 
     // Fade state — applied via mixerNode.outputVolume (never in render callbacks)
     private var fadeTarget: Float = 1.0
@@ -34,27 +43,62 @@ final class AudioEngine: @unchecked Sendable {
     private var format: AVAudioFormat!
 
     private(set) var isPlaying = false
+    private var isInterrupted = false
+    private var isRebuildingGraph = false
+    private var shouldResumeAfterInterruption = false
+    private var remoteCommandsConfigured = false
 
     // Notification observers
     private var interruptionObserver: Any?
     private var routeChangeObserver: Any?
+    private var mediaServicesResetObserver: Any?
+    private var engineConfigurationObserver: Any?
 
     // Callback for route-change events the UI needs to handle
     var onBinauralHeadphonesDisconnected: (() -> Void)?
 
     private init() {
-        // Configure audio session FIRST so the output node reports the real
-        // hardware format (sample rate, channel count) rather than defaults.
-        Self.configureAudioSessionOnce()
+        configureAudioSession()
+        configureEngineGraph()
+        setupSessionObservers()
+        setupRemoteCommandCenter()
+    }
 
+    // MARK: - Audio Session
+
+    private static var sessionCategoryConfigured = false
+
+    private static func configureAudioSessionCategoryIfNeeded() {
+        guard !sessionCategoryConfigured else { return }
+        let session = AVAudioSession.sharedInstance()
+        do {
+            try session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
+            let preferredRate = session.sampleRate > 0 ? session.sampleRate : 48_000
+            try session.setPreferredIOBufferDuration(
+                Double(AudioConstants.preferredIOBufferFrameCount) / preferredRate
+            )
+            sessionCategoryConfigured = true
+        } catch {
+            print("Audio session configuration failed: \(error)")
+        }
+    }
+
+    func configureAudioSession() {
+        Self.configureAudioSessionCategoryIfNeeded()
+        do {
+            try AVAudioSession.sharedInstance().setActive(true)
+        } catch {
+            print("Audio session activation failed: \(error)")
+        }
+    }
+
+    private func configureEngineGraph() {
+        engine.autoShutdownEnabled = true
         engine.attach(mixerNode)
 
-        // Query the actual hardware sample rate from the output node.
         let hwFormat = engine.outputNode.inputFormat(forBus: 0)
-        actualSampleRate = hwFormat.sampleRate > 0 ? hwFormat.sampleRate : 44100
+        actualSampleRate = hwFormat.sampleRate > 0 ? hwFormat.sampleRate : AudioConstants.sampleRate
 
-        // Internal processing format: stereo float32 non-interleaved at hardware rate.
-        // Non-interleaved is what AVAudioEngine nodes expect internally.
         format = AVAudioFormat(
             commonFormat: .pcmFormatFloat32,
             sampleRate: actualSampleRate,
@@ -62,31 +106,29 @@ final class AudioEngine: @unchecked Sendable {
             interleaved: false
         )!
 
-        // Connect mixer → output using nil format to let the engine negotiate
-        // the output node's native format automatically (avoids FormatNotSupported).
         engine.connect(mixerNode, to: engine.outputNode, format: nil)
-
-        setupSessionObservers()
+        registerEngineConfigurationObserver()
     }
 
-    // MARK: - Audio Session
-
-    private static var sessionConfigured = false
-
-    private static func configureAudioSessionOnce() {
-        guard !sessionConfigured else { return }
-        sessionConfigured = true
-        let session = AVAudioSession.sharedInstance()
-        do {
-            try session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
-            try session.setActive(true)
-        } catch {
-            print("Audio session configuration failed: \(error)")
+    private func resetEngineGraph() {
+        if let observer = engineConfigurationObserver {
+            NotificationCenter.default.removeObserver(observer)
+            engineConfigurationObserver = nil
         }
+
+        engine = AVAudioEngine()
+        mixerNode = AVAudioMixerNode()
+        configureEngineGraph()
     }
 
-    func configureAudioSession() {
-        Self.configureAudioSessionOnce()
+    private var configuredFadeDuration: TimeInterval {
+        let stored = UserDefaults.standard.double(forKey: Self.fadeDurationKey)
+        return stored > 0 ? stored : AudioConstants.defaultFadeDuration
+    }
+
+    private var configuredBinauralCarrier: Float {
+        let stored = UserDefaults.standard.double(forKey: Self.binauralCarrierKey)
+        return stored > 0 ? Float(stored) : AudioConstants.defaultBinauralCarrier
     }
 
     // MARK: - Session Observers
@@ -111,6 +153,28 @@ final class AudioEngine: @unchecked Sendable {
         ) { [weak self] notification in
             self?.handleRouteChange(notification)
         }
+
+        mediaServicesResetObserver = NotificationCenter.default.addObserver(
+            forName: AVAudioSession.mediaServicesWereResetNotification,
+            object: session,
+            queue: .main
+        ) { [weak self] _ in
+            self?.handleMediaServicesReset()
+        }
+    }
+
+    private func registerEngineConfigurationObserver() {
+        if let observer = engineConfigurationObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
+
+        engineConfigurationObserver = NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange,
+            object: engine,
+            queue: .main
+        ) { [weak self] _ in
+            self?.handleEngineConfigurationChange()
+        }
     }
 
     private func handleInterruption(_ notification: Notification) {
@@ -120,23 +184,26 @@ final class AudioEngine: @unchecked Sendable {
 
         switch type {
         case .began:
-            // Another audio source has taken priority — pause gracefully
-            if isPlaying {
-                engine.pause()
-                pauseAllPlayerNodes()
-                // Don't set isPlaying = false; we may resume
-            }
+            isInterrupted = true
+            shouldResumeAfterInterruption = isPlaying
+            isFading = false
+            pauseAllPlayerNodes()
+            engine.pause()
 
         case .ended:
-            guard let optionsValue = userInfo[AVAudioSessionInterruptionOptionKey] as? UInt else { return }
+            let optionsValue = userInfo[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0
             let options = AVAudioSession.InterruptionOptions(rawValue: optionsValue)
-            if options.contains(.shouldResume) && isPlaying {
-                do {
-                    try engine.start()
-                    startAllPlayerNodes()
-                } catch {
-                    print("Engine restart after interruption failed: \(error)")
-                }
+            let shouldResume = shouldResumeAfterInterruption && options.contains(.shouldResume)
+
+            configureAudioSession()
+            isInterrupted = false
+            shouldResumeAfterInterruption = false
+
+            if shouldResume {
+                rebuildAudioGraph(shouldResumePlayback: true)
+            } else {
+                isPlaying = false
+                clearNowPlaying()
             }
 
         @unknown default:
@@ -150,21 +217,37 @@ final class AudioEngine: @unchecked Sendable {
               let reason = AVAudioSession.RouteChangeReason(rawValue: reasonValue) else { return }
 
         if reason == .oldDeviceUnavailable {
-            // A device was removed (headphones unplugged, BT disconnected).
-            // If binaural beats are active, pause and notify the UI.
-            let hasBinaural = generators.values.contains { $0 is BinauralBeatGenerator }
-            if hasBinaural && isPlaying {
-                engine.pause()
+            let previousRoute = userInfo[AVAudioSessionRouteChangePreviousRouteKey] as? AVAudioSessionRouteDescription
+            let lostStereoRoute = previousRoute?.outputs.contains(where: Self.supportsBinauralPlayback) ?? false
+
+            if lostStereoRoute,
+               generators.values.contains(where: { $0 is BinauralBeatGenerator }),
+               isPlaying,
+               !Self.headphonesConnected {
                 pauseAllPlayerNodes()
+                engine.pause()
                 isPlaying = false
+                clearNowPlaying()
                 onBinauralHeadphonesDisconnected?()
             }
         }
     }
 
+    private func handleEngineConfigurationChange() {
+        rebuildAudioGraph(shouldResumePlayback: isPlaying && !isInterrupted)
+    }
+
+    private func handleMediaServicesReset() {
+        Self.sessionCategoryConfigured = false
+        configureAudioSession()
+        rebuildAudioGraph(shouldResumePlayback: isPlaying || shouldResumeAfterInterruption)
+    }
+
     deinit {
         if let obs = interruptionObserver { NotificationCenter.default.removeObserver(obs) }
         if let obs = routeChangeObserver { NotificationCenter.default.removeObserver(obs) }
+        if let obs = mediaServicesResetObserver { NotificationCenter.default.removeObserver(obs) }
+        if let obs = engineConfigurationObserver { NotificationCenter.default.removeObserver(obs) }
     }
 
     // MARK: - Source Management
@@ -172,24 +255,33 @@ final class AudioEngine: @unchecked Sendable {
     func addSource(id: UUID, type: SoundType, volume: Float,
                    binauralRange: BinauralRange? = nil,
                    binauralFrequency: Float? = nil) {
-        removeSource(id: id)
-        channelVolumes[id] = volume
+        let config = SourceConfiguration(
+            type: type,
+            volume: volume,
+            binauralRange: binauralRange,
+            binauralFrequency: binauralFrequency
+        )
 
-        if type.isGenerated {
-            addGeneratedSource(id: id, type: type, volume: volume,
-                              binauralRange: binauralRange,
-                              binauralFrequency: binauralFrequency)
+        sourceConfigurations[id] = config
+        removeAttachedSource(id: id)
+        attachSource(id: id, config: config)
+    }
+
+    private func attachSource(id: UUID, config: SourceConfiguration) {
+        if config.type.isGenerated {
+            addGeneratedSource(id: id, config: config)
         } else {
-            addSampleSource(id: id, type: type, volume: volume)
+            addSampleSource(id: id, config: config)
         }
     }
 
-    private func addGeneratedSource(id: UUID, type: SoundType, volume: Float,
-                                     binauralRange: BinauralRange?,
-                                     binauralFrequency: Float?) {
-        let generator = makeGenerator(for: type, binauralRange: binauralRange,
-                                       binauralFrequency: binauralFrequency)
-        generator.volume = volume
+    private func addGeneratedSource(id: UUID, config: SourceConfiguration) {
+        let generator = makeGenerator(
+            for: config.type,
+            binauralRange: config.binauralRange,
+            binauralFrequency: config.binauralFrequency
+        )
+        generator.volume = config.volume
         generators[id] = generator
 
         let gen = generator
@@ -223,10 +315,12 @@ final class AudioEngine: @unchecked Sendable {
         sourceNodes[id] = sourceNode
     }
 
-    private func addSampleSource(id: UUID, type: SoundType, volume: Float) {
-        let player = SampleLoopPlayer(fileName: type.sampleFileName,
-                                       sampleRate: actualSampleRate)
-        player.volume = volume
+    private func addSampleSource(id: UUID, config: SourceConfiguration) {
+        let player = SampleLoopPlayer(
+            fileName: config.type.sampleFileName,
+            sampleRate: actualSampleRate
+        )
+        player.volume = config.volume
         samplePlayers[id] = player
 
         let playerNode = AVAudioPlayerNode()
@@ -234,7 +328,7 @@ final class AudioEngine: @unchecked Sendable {
 
         // Connect with the engine format. AVAudioPlayerNode handles format conversion.
         engine.connect(playerNode, to: mixerNode, format: format)
-        playerNode.volume = volume
+        playerNode.volume = config.volume
 
         if let buffer = player.loopBuffer {
             playerNode.scheduleBuffer(buffer, at: nil, options: .loops)
@@ -249,6 +343,11 @@ final class AudioEngine: @unchecked Sendable {
     }
 
     func removeSource(id: UUID) {
+        sourceConfigurations.removeValue(forKey: id)
+        removeAttachedSource(id: id)
+    }
+
+    private func removeAttachedSource(id: UUID) {
         // Generated source
         if let node = sourceNodes.removeValue(forKey: id) {
             engine.disconnectNodeOutput(node)
@@ -263,19 +362,23 @@ final class AudioEngine: @unchecked Sendable {
             engine.detach(node)
         }
         samplePlayers.removeValue(forKey: id)
-
-        channelVolumes.removeValue(forKey: id)
     }
 
     func removeAllSources() {
+        sourceConfigurations.removeAll()
+        removeAllAttachedSources()
+    }
+
+    private func removeAllAttachedSources() {
         let allIDs = Array(Set(Array(sourceNodes.keys) + Array(playerNodes.keys)))
-        for id in allIDs {
-            removeSource(id: id)
-        }
+        for id in allIDs { removeAttachedSource(id: id) }
     }
 
     func setVolume(_ volume: Float, for id: UUID) {
-        channelVolumes[id] = volume
+        if var config = sourceConfigurations[id] {
+            config.volume = volume
+            sourceConfigurations[id] = config
+        }
         // Generated sources: atomic store read by the render callback
         generators[id]?.volume = volume
         // Sample sources: AVAudioPlayerNode.volume is thread-safe
@@ -283,9 +386,22 @@ final class AudioEngine: @unchecked Sendable {
     }
 
     func updateBinauralParameters(for id: UUID, range: BinauralRange?, frequency: Float?) {
+        if var config = sourceConfigurations[id] {
+            if let range { config.binauralRange = range }
+            if let frequency { config.binauralFrequency = frequency }
+            sourceConfigurations[id] = config
+        }
+
         guard let gen = generators[id] as? BinauralBeatGenerator else { return }
         if let range { gen.setRange(range) }
         if let freq = frequency { gen.beatFrequency = freq }
+    }
+
+    func setDefaultBinauralCarrier(_ frequency: Float) {
+        for generator in generators.values {
+            guard let binaural = generator as? BinauralBeatGenerator else { continue }
+            binaural.carrierFrequency = frequency
+        }
     }
 
     // MARK: - Playback Control
@@ -300,7 +416,6 @@ final class AudioEngine: @unchecked Sendable {
             startAllPlayerNodes()
             fadeIn()
             updateNowPlaying()
-            setupRemoteCommandCenter()
         } catch {
             print("Engine start failed: \(error)")
         }
@@ -346,7 +461,8 @@ final class AudioEngine: @unchecked Sendable {
         mixerNode.outputVolume = max(0, min(1, vol))
     }
 
-    private func fadeIn(duration: TimeInterval = AudioConstants.defaultFadeDuration) {
+    private func fadeIn(duration: TimeInterval? = nil) {
+        let duration = duration ?? configuredFadeDuration
         mixerNode.outputVolume = 0
         fadeTarget = 1.0
         let steps = Int(duration * 60) // 60 fps timer ticks
@@ -356,7 +472,8 @@ final class AudioEngine: @unchecked Sendable {
         performFade()
     }
 
-    private func fadeOut(duration: TimeInterval = AudioConstants.defaultFadeDuration, completion: @escaping () -> Void) {
+    private func fadeOut(duration: TimeInterval? = nil, completion: @escaping () -> Void) {
+        let duration = duration ?? configuredFadeDuration
         fadeTarget = 0
         let steps = Int(duration * 60)
         fadeStep = -mixerNode.outputVolume / Float(max(steps, 1))
@@ -409,6 +526,7 @@ final class AudioEngine: @unchecked Sendable {
             return GrayNoiseGenerator(sampleRate: actualSampleRate)
         case .binauralBeats:
             let gen = BinauralBeatGenerator(sampleRate: actualSampleRate)
+            gen.carrierFrequency = configuredBinauralCarrier
             if let range = binauralRange { gen.setRange(range) }
             if let freq = binauralFrequency { gen.beatFrequency = freq }
             return gen
@@ -420,7 +538,11 @@ final class AudioEngine: @unchecked Sendable {
     // MARK: - Now Playing / Control Center
 
     private func setupRemoteCommandCenter() {
+        guard !remoteCommandsConfigured else { return }
         let center = MPRemoteCommandCenter.shared()
+        center.playCommand.removeTarget(nil)
+        center.pauseCommand.removeTarget(nil)
+        center.togglePlayPauseCommand.removeTarget(nil)
 
         center.playCommand.isEnabled = true
         center.playCommand.addTarget { [weak self] _ in
@@ -439,6 +561,8 @@ final class AudioEngine: @unchecked Sendable {
             self?.togglePlayback()
             return .success
         }
+
+        remoteCommandsConfigured = true
     }
 
     private func updateNowPlaying() {
@@ -456,13 +580,68 @@ final class AudioEngine: @unchecked Sendable {
 
     // MARK: - Headphone Detection
 
+    private func rebuildAudioGraph(shouldResumePlayback: Bool) {
+        guard !isRebuildingGraph else { return }
+        isRebuildingGraph = true
+
+        let configs = sourceConfigurations
+        let targetVolume = mixerNode.outputVolume
+
+        isFading = false
+        pauseAllPlayerNodes()
+        engine.stop()
+
+        sourceNodes.removeAll()
+        generators.removeAll()
+        playerNodes.removeAll()
+        samplePlayers.removeAll()
+
+        configureAudioSession()
+        resetEngineGraph()
+
+        for (id, config) in configs {
+            attachSource(id: id, config: config)
+        }
+
+        mixerNode.outputVolume = targetVolume
+
+        if shouldResumePlayback && !configs.isEmpty {
+            do {
+                try engine.start()
+                isPlaying = true
+                startAllPlayerNodes()
+                if targetVolume <= 0 {
+                    fadeIn()
+                }
+                updateNowPlaying()
+            } catch {
+                isPlaying = false
+                clearNowPlaying()
+                print("Audio graph rebuild failed to restart playback: \(error)")
+            }
+        } else {
+            isPlaying = false
+            clearNowPlaying()
+        }
+
+        isRebuildingGraph = false
+    }
+
+    private static func supportsBinauralPlayback(_ output: AVAudioSessionPortDescription) -> Bool {
+        supportsBinauralPlayback(output.portType)
+    }
+
+    private static func supportsBinauralPlayback(_ portType: AVAudioSession.Port) -> Bool {
+        switch portType {
+        case .headphones, .bluetoothA2DP, .bluetoothLE:
+            return true
+        default:
+            return false
+        }
+    }
+
     static var headphonesConnected: Bool {
         let outputs = AVAudioSession.sharedInstance().currentRoute.outputs
-        return outputs.contains { port in
-            port.portType == .headphones ||
-            port.portType == .bluetoothA2DP ||
-            port.portType == .bluetoothHFP ||
-            port.portType == .bluetoothLE
-        }
+        return outputs.contains(where: supportsBinauralPlayback)
     }
 }

@@ -2,6 +2,7 @@ import SwiftUI
 import SwiftData
 import AudioToolbox
 
+@MainActor
 @Observable
 final class PlayerViewModel {
     var isPlaying = false
@@ -17,6 +18,10 @@ final class PlayerViewModel {
     let timerState = TimerState()
     private var timerTask: Task<Void, Never>?
     private let engine = AudioEngine.shared
+    private static let lastSessionKey = "lastSessionSources"
+    private static let timerEndDateKey = "timerEndDate"
+    private static let timerDurationKey = "timerDuration"
+    private static let timerPlayChimeKey = "timerPlayChimeOnEnd"
 
     init() {
         engine.onBinauralHeadphonesDisconnected = { [weak self] in
@@ -24,6 +29,9 @@ final class PlayerViewModel {
             self.isPlaying = false
             self.showBinauralRouteWarning = true
         }
+
+        timerState.playChimeOnEnd = UserDefaults.standard.object(forKey: Self.timerPlayChimeKey) as? Bool ?? true
+        restorePersistedTimerIfNeeded()
     }
 
     // MARK: - Preset Loading
@@ -92,6 +100,7 @@ final class PlayerViewModel {
         applyCurrentSources()
         engine.start()
         isPlaying = true
+        applyTimerFadeIfNeeded()
 
         let impact = UIImpactFeedbackGenerator(style: .medium)
         impact.impactOccurred()
@@ -122,40 +131,22 @@ final class PlayerViewModel {
     // MARK: - Timer
 
     func startTimer(duration: TimeInterval) {
-        timerState.selectedDuration = duration
-        timerState.remainingSeconds = duration
-        timerState.isRunning = true
-
-        timerTask?.cancel()
-        timerTask = Task { @MainActor [weak self] in
-            while let self, self.timerState.isRunning, self.timerState.remainingSeconds > 0 {
-                try? await Task.sleep(for: .seconds(1))
-                guard !Task.isCancelled else { break }
-
-                self.timerState.remainingSeconds -= 1
-
-                // Apply fade during final seconds
-                if self.timerState.isFadingOut {
-                    self.engine.applyTimerFade(self.timerState.fadeMultiplier)
-                }
-
-                if self.timerState.remainingSeconds <= 0 {
-                    self.timerExpired()
-                }
-            }
-        }
+        timerState.start(duration: duration)
+        persistTimerPreferences()
+        persistTimerState()
+        startTimerUpdates()
     }
 
     func stopTimer() {
-        timerState.isRunning = false
-        timerState.remainingSeconds = 0
         timerTask?.cancel()
         timerTask = nil
+        timerState.clear()
+        clearPersistedTimerState()
         engine.setMasterVolume(1.0)
     }
 
     private func timerExpired() {
-        timerState.isRunning = false
+        clearPersistedTimerState()
         stop()
 
         if timerState.playChimeOnEnd {
@@ -177,8 +168,6 @@ final class PlayerViewModel {
 
     // MARK: - Last Session
 
-    private static let lastSessionKey = "lastSessionSources"
-
     func saveLastSession() {
         guard let data = try? JSONEncoder().encode(activeSources) else { return }
         UserDefaults.standard.set(data, forKey: Self.lastSessionKey)
@@ -191,5 +180,94 @@ final class PlayerViewModel {
         activeSources = sources
         currentPreset = nil
         return true
+    }
+
+    func handleScenePhaseChange(_ phase: ScenePhase) {
+        switch phase {
+        case .active:
+            refreshTimerState()
+            if timerState.isRunning {
+                startTimerUpdates()
+            }
+        case .inactive, .background:
+            saveLastSession()
+            persistTimerState()
+        @unknown default:
+            break
+        }
+    }
+
+    func persistTimerPreferences() {
+        UserDefaults.standard.set(timerState.playChimeOnEnd, forKey: Self.timerPlayChimeKey)
+    }
+
+    private func startTimerUpdates() {
+        timerTask?.cancel()
+        refreshTimerState()
+        guard timerState.isRunning else { return }
+
+        timerTask = Task { [weak self] in
+            while let self, !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(1))
+                guard !Task.isCancelled else { break }
+                self.refreshTimerState()
+                if !self.timerState.isRunning { break }
+            }
+        }
+    }
+
+    private func refreshTimerState() {
+        guard timerState.endDate != nil else { return }
+
+        if timerState.syncRemaining() {
+            timerExpired()
+            return
+        }
+
+        persistTimerState()
+        applyTimerFadeIfNeeded()
+    }
+
+    private func applyTimerFadeIfNeeded() {
+        if timerState.isFadingOut {
+            engine.applyTimerFade(timerState.fadeMultiplier)
+        } else if isPlaying {
+            engine.setMasterVolume(1.0)
+        }
+    }
+
+    private func restorePersistedTimerIfNeeded() {
+        let defaults = UserDefaults.standard
+        guard let endDate = defaults.object(forKey: Self.timerEndDateKey) as? Date else { return }
+
+        let storedDuration = defaults.double(forKey: Self.timerDurationKey)
+        timerState.selectedDuration = storedDuration > 0 ? storedDuration : TimerDuration.twentyFive.seconds
+        timerState.endDate = endDate
+
+        if timerState.syncRemaining() {
+            clearPersistedTimerState()
+            return
+        }
+
+        startTimerUpdates()
+    }
+
+    private func persistTimerState() {
+        persistTimerPreferences()
+
+        let defaults = UserDefaults.standard
+        if let endDate = timerState.endDate {
+            defaults.set(endDate, forKey: Self.timerEndDateKey)
+            defaults.set(timerState.selectedDuration, forKey: Self.timerDurationKey)
+        } else {
+            defaults.removeObject(forKey: Self.timerEndDateKey)
+            defaults.removeObject(forKey: Self.timerDurationKey)
+        }
+    }
+
+    private func clearPersistedTimerState() {
+        let defaults = UserDefaults.standard
+        defaults.removeObject(forKey: Self.timerEndDateKey)
+        defaults.removeObject(forKey: Self.timerDurationKey)
     }
 }
