@@ -14,30 +14,49 @@ struct PresetSelector: View {
 
     @State private var editingPreset: EditTarget?
     @State private var editName = ""
+    @State private var presetToEdit: Preset?
 
-    // Track which built-in presets the user has hidden or renamed
     @AppStorage("hiddenBuiltInPresets") private var hiddenBuiltInData = Data()
     @AppStorage("renamedBuiltInPresets") private var renamedBuiltInData = Data()
 
     private var hiddenBuiltInIDs: Set<UUID> {
-        get { (try? JSONDecoder().decode(Set<UUID>.self, from: hiddenBuiltInData)) ?? [] }
+        (try? JSONDecoder().decode(Set<UUID>.self, from: hiddenBuiltInData)) ?? []
     }
 
     private var renamedBuiltIns: [UUID: String] {
-        get { (try? JSONDecoder().decode([UUID: String].self, from: renamedBuiltInData)) ?? [:] }
+        (try? JSONDecoder().decode([UUID: String].self, from: renamedBuiltInData)) ?? [:]
     }
 
-    private var visibleBuiltIns: [Preset] {
-        Preset.builtIn
-            .filter { !hiddenBuiltInIDs.contains($0.id) }
-            .map { preset in
-                if let newName = renamedBuiltIns[preset.id] {
-                    var p = preset
-                    p.name = newName
-                    return p
-                }
-                return preset
+    // Saved presets keyed by stableID for quick lookup
+    private var savedByID: [UUID: SavedPreset] {
+        Dictionary(uniqueKeysWithValues: savedPresets.map { ($0.stableID, $0) })
+    }
+
+    /// Merged preset list: built-in slots (replaced by saved version if edited),
+    /// followed by user-created presets that don't replace a built-in.
+    private var orderedPresets: [(preset: Preset, saved: SavedPreset?)] {
+        let builtInIDs = Set(Preset.builtIn.map(\.id))
+        var result: [(Preset, SavedPreset?)] = []
+
+        // Built-in slots in original order
+        for builtIn in Preset.builtIn {
+            if let saved = savedByID[builtIn.id] {
+                // Edited built-in — show saved version in the built-in's slot
+                result.append((saved.toPreset(), saved))
+            } else if !hiddenBuiltInIDs.contains(builtIn.id) {
+                // Unedited, not hidden
+                var p = builtIn
+                if let newName = renamedBuiltIns[builtIn.id] { p.name = newName }
+                result.append((p, nil))
             }
+        }
+
+        // User-created presets (not replacing a built-in)
+        for saved in savedPresets where !builtInIDs.contains(saved.stableID) {
+            result.append((saved.toPreset(), saved))
+        }
+
+        return result
     }
 
     var body: some View {
@@ -57,9 +76,11 @@ struct PresetSelector: View {
             }
             .buttonStyle(.plain)
 
-            // Built-in presets (with rename/delete via context menu)
-            ForEach(visibleBuiltIns) { preset in
+            ForEach(orderedPresets, id: \.preset.id) { entry in
+                let preset = entry.preset
+                let saved = entry.saved
                 let selected = selectedPreset?.id == preset.id
+
                 Button { onSelect(preset) } label: {
                     presetRow(
                         icon: preset.icon,
@@ -70,45 +91,28 @@ struct PresetSelector: View {
                 }
                 .buttonStyle(.plain)
                 .contextMenu {
+                    Button {
+                        presetToEdit = preset
+                    } label: {
+                        Label("Edit Sounds", systemImage: "slider.horizontal.3")
+                    }
                     Button {
                         editName = preset.name
-                        editingPreset = .builtIn(preset)
+                        if let saved {
+                            editingPreset = .saved(saved)
+                        } else {
+                            editingPreset = .builtIn(preset)
+                        }
                     } label: {
                         Label("Rename", systemImage: "pencil")
                     }
                     Button(role: .destructive) {
-                        hideBuiltIn(preset)
+                        if let saved {
+                            deleteSaved(saved)
+                        } else {
+                            hideBuiltIn(preset)
+                        }
                         onDelete(preset)
-                    } label: {
-                        Label("Delete", systemImage: "trash")
-                    }
-                }
-            }
-
-            // Saved presets
-            ForEach(savedPresets) { saved in
-                let preset = saved.toPreset()
-                let selected = selectedPreset?.id == preset.id
-                Button { onSelect(preset) } label: {
-                    presetRow(
-                        icon: preset.icon,
-                        name: preset.name,
-                        detail: presetSummary(preset),
-                        isSelected: selected
-                    )
-                }
-                .buttonStyle(.plain)
-                .contextMenu {
-                    Button {
-                        editName = saved.name
-                        editingPreset = .saved(saved)
-                    } label: {
-                        Label("Rename", systemImage: "pencil")
-                    }
-                    Button(role: .destructive) {
-                        let p = saved.toPreset()
-                        deleteSaved(saved)
-                        onDelete(p)
                     } label: {
                         Label("Delete", systemImage: "trash")
                     }
@@ -136,9 +140,40 @@ struct PresetSelector: View {
                 editingPreset = nil
             }
         }
+        .sheet(item: $presetToEdit) { preset in
+            EditPresetSheet(preset: preset) { preset, newSources in
+                saveEditedPreset(preset, sources: newSources)
+                // Reload with correct ID so highlighting works
+                var updated = preset
+                updated.sources = newSources
+                onSelect(updated)
+            }
+            .presentationDetents([.large])
+            .presentationDragIndicator(.visible)
+        }
     }
 
-    // MARK: - Built-in Preset Mutations (stored in UserDefaults)
+    // MARK: - Persistence
+
+    private func saveEditedPreset(_ preset: Preset, sources: [SoundSource]) {
+        let targetID = preset.id
+        let descriptor = FetchDescriptor<SavedPreset>(
+            predicate: #Predicate { $0.stableID == targetID }
+        )
+        if let saved = try? modelContext.fetch(descriptor).first {
+            saved.sources = sources
+            return
+        }
+
+        // Built-in preset: convert to saved, keeping the same ID
+        if preset.isBuiltIn {
+            let name = renamedBuiltIns[preset.id] ?? preset.name
+            let saved = SavedPreset(name: name, icon: preset.icon, sources: sources)
+            saved.stableID = preset.id
+            modelContext.insert(saved)
+            // Don't call hideBuiltIn — orderedPresets already prefers the saved version
+        }
+    }
 
     private func hideBuiltIn(_ preset: Preset) {
         var hidden = hiddenBuiltInIDs
