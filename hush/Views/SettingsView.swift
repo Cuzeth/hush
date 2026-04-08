@@ -9,89 +9,98 @@ struct SettingsView: View {
 
     var body: some View {
         NavigationStack {
-            List {
-                Section("Playback") {
-                    Toggle("Auto-resume last session", isOn: $autoResumeLast)
+            ZStack {
+                HushBackdrop()
 
-                    VStack(alignment: .leading) {
-                        HStack {
-                            Text("Fade duration")
-                            Spacer()
-                            Text("\(fadeDuration, specifier: "%.1f")s")
-                                .foregroundStyle(.secondary)
-                        }
-                        Slider(value: $fadeDuration, in: 0.1...2.0, step: 0.1)
-                            .accessibilityLabel("Fade duration")
-                            .accessibilityValue("\(fadeDuration, specifier: "%.1f") seconds")
-                    }
-                }
+                List {
+                    Section("Playback") {
+                        Toggle("Auto-resume last session", isOn: $autoResumeLast)
 
-                Section("Binaural Beats") {
-                    VStack(alignment: .leading) {
-                        HStack {
-                            Text("Carrier frequency")
-                            Spacer()
-                            Text("\(Int(binauralCarrier)) Hz")
-                                .foregroundStyle(.secondary)
-                        }
-                        Slider(value: $binauralCarrier, in: 100...500, step: 10)
-                            .accessibilityLabel("Binaural carrier frequency")
-                            .accessibilityValue("\(Int(binauralCarrier)) hertz")
-                            .onChange(of: binauralCarrier) { _, newValue in
-                                AudioEngine.shared.setDefaultBinauralCarrier(Float(newValue))
+                        VStack(alignment: .leading) {
+                            HStack {
+                                Text("Fade duration")
+                                Spacer()
+                                Text("\(fadeDuration, specifier: "%.1f")s")
+                                    .foregroundStyle(HushPalette.textSecondary)
                             }
+                            Slider(value: $fadeDuration, in: 0.1...2.0, step: 0.1)
+                                .accessibilityLabel("Fade duration")
+                                .accessibilityValue("\(fadeDuration, specifier: "%.1f") seconds")
+                        }
                     }
 
-                    HStack {
-                        Image(systemName: "headphones")
-                            .foregroundStyle(.secondary)
-                        Text(AudioEngine.headphonesConnected ? "Headphones connected" : "No headphones detected")
-                            .font(.subheadline)
-                            .foregroundStyle(AudioEngine.headphonesConnected ? .green : .secondary)
-                    }
-                }
+                    Section("Binaural Beats") {
+                        VStack(alignment: .leading) {
+                            HStack {
+                                Text("Carrier frequency")
+                                Spacer()
+                                Text("\(Int(binauralCarrier)) Hz")
+                                    .foregroundStyle(HushPalette.textSecondary)
+                            }
+                            Slider(value: $binauralCarrier, in: 100...500, step: 10)
+                                .accessibilityLabel("Binaural carrier frequency")
+                                .accessibilityValue("\(Int(binauralCarrier)) hertz")
+                                .onChange(of: binauralCarrier) { _, newValue in
+                                    AudioEngine.shared.setDefaultBinauralCarrier(Float(newValue))
+                                }
+                        }
 
-                Section("Audio") {
-                    HStack {
-                        Text("Sample rate")
-                        Spacer()
-                        Text("\(Int(AudioEngine.shared.actualSampleRate)) Hz")
-                            .foregroundStyle(.secondary)
+                        HStack {
+                            Image(systemName: "headphones")
+                                .foregroundStyle(HushPalette.textSecondary)
+                            Text(AudioEngine.headphonesConnected ? "Headphones connected" : "No headphones detected")
+                                .font(.subheadline)
+                                .foregroundStyle(AudioEngine.headphonesConnected ? HushPalette.accentSoft : HushPalette.textSecondary)
+                        }
                     }
-                    HStack {
-                        Text("Bit depth")
-                        Spacer()
-                        Text("32-bit float")
-                            .foregroundStyle(.secondary)
-                    }
-                }
 
-                Section("About") {
-                    HStack {
-                        Text("Version")
-                        Spacer()
-                        Text("1.0")
-                            .foregroundStyle(.secondary)
+                    Section("Audio") {
+                        HStack {
+                            Text("Sample rate")
+                            Spacer()
+                            Text("\(Int(AudioEngine.shared.actualSampleRate)) Hz")
+                                .foregroundStyle(HushPalette.textSecondary)
+                        }
+                        HStack {
+                            Text("Bit depth")
+                            Spacer()
+                            Text("32-bit float")
+                                .foregroundStyle(HushPalette.textSecondary)
+                        }
                     }
-                    HStack {
-                        Text("License")
-                        Spacer()
-                        Text("GPL v3")
-                            .foregroundStyle(.secondary)
+
+                    Section("About") {
+                        HStack {
+                            Text("Version")
+                            Spacer()
+                            Text("1.0")
+                                .foregroundStyle(HushPalette.textSecondary)
+                        }
+                        HStack {
+                            Text("License")
+                            Spacer()
+                            Text("GPL v3")
+                                .foregroundStyle(HushPalette.textSecondary)
+                        }
+                        Text("Hush generates ADHD-friendly focus sounds using real-time DSP. No accounts, no analytics, no tracking.")
+                            .font(.caption)
+                            .foregroundStyle(HushPalette.textSecondary)
+                        Text("Hush is a focus and relaxation aid, not a medical device, and it is not intended to diagnose or treat any condition.")
+                            .font(.caption)
+                            .foregroundStyle(HushPalette.textSecondary)
                     }
-                    Text("Hush generates ADHD-friendly focus sounds using real-time DSP. No accounts, no analytics, no tracking.")
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                    Text("Hush is a focus and relaxation aid, not a medical device, and it is not intended to diagnose or treat any condition.")
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
                 }
+                .scrollContentBackground(.hidden)
+                .listStyle(.insetGrouped)
+                .foregroundStyle(HushPalette.textPrimary)
+                .tint(HushPalette.accentSoft)
             }
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Done") { dismiss() }
+                        .foregroundStyle(HushPalette.textPrimary)
                 }
             }
         }

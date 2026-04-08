@@ -627,11 +627,11 @@ final class AudioEngine: @unchecked Sendable {
         isRebuildingGraph = false
     }
 
-    private static func supportsBinauralPlayback(_ output: AVAudioSessionPortDescription) -> Bool {
+    nonisolated private static func supportsBinauralPlayback(_ output: AVAudioSessionPortDescription) -> Bool {
         supportsBinauralPlayback(output.portType)
     }
 
-    private static func supportsBinauralPlayback(_ portType: AVAudioSession.Port) -> Bool {
+    nonisolated private static func supportsBinauralPlayback(_ portType: AVAudioSession.Port) -> Bool {
         switch portType {
         case .headphones, .bluetoothA2DP, .bluetoothLE:
             return true
@@ -640,7 +640,7 @@ final class AudioEngine: @unchecked Sendable {
         }
     }
 
-    static var headphonesConnected: Bool {
+    nonisolated static var headphonesConnected: Bool {
         let outputs = AVAudioSession.sharedInstance().currentRoute.outputs
         return outputs.contains(where: supportsBinauralPlayback)
     }
