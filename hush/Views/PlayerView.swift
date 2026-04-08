@@ -5,6 +5,13 @@ struct PlayerView: View {
     @Bindable var viewModel: PlayerViewModel
     @State private var showSavePreset = false
     @State private var presetName = ""
+    @State private var presetIcon = "star.fill"
+
+    private static let iconChoices = [
+        "star.fill", "heart.fill", "bolt.fill", "moon.fill", "leaf.fill",
+        "flame.fill", "drop.fill", "brain.head.profile", "sparkles",
+        "headphones", "music.note", "waveform.circle"
+    ]
 
     @Environment(\.modelContext) private var modelContext
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -46,7 +53,7 @@ struct PlayerView: View {
                 .presentationDragIndicator(.visible)
         }
         .sheet(isPresented: $viewModel.showSettings) {
-            SettingsView()
+            SettingsView(viewModel: viewModel)
         }
         .alert("Headphones Recommended", isPresented: $viewModel.showHeadphoneWarning) {
             Button("OK") {}
@@ -58,16 +65,20 @@ struct PlayerView: View {
         } message: {
             Text("Binaural beats were paused because headphones were disconnected. Reconnect headphones and press play to resume.")
         }
-        .alert("Save Preset", isPresented: $showSavePreset) {
-            TextField("Preset name", text: $presetName)
-            Button("Save") {
+        .sheet(isPresented: $showSavePreset) {
+            SavePresetSheet(
+                name: $presetName,
+                icon: $presetIcon,
+                iconChoices: Self.iconChoices
+            ) {
                 guard !presetName.isEmpty else { return }
-                viewModel.saveCurrentAsPreset(name: presetName, context: modelContext)
+                viewModel.saveCurrentAsPreset(name: presetName, icon: presetIcon, context: modelContext)
                 presetName = ""
+                presetIcon = "star.fill"
+                showSavePreset = false
             }
-            Button("Cancel", role: .cancel) {
-                presetName = ""
-            }
+            .presentationDetents([.medium])
+            .presentationDragIndicator(.visible)
         }
     }
 
@@ -318,5 +329,93 @@ struct PlayerView: View {
         case .none:
             return [HushPalette.accentGlow, HushPalette.surfaceRaised]
         }
+    }
+}
+
+private struct SavePresetSheet: View {
+    @Binding var name: String
+    @Binding var icon: String
+    let iconChoices: [String]
+    let onSave: () -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @FocusState private var nameFieldFocused: Bool
+
+    private let columns = Array(repeating: GridItem(.flexible(), spacing: 12), count: 6)
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                HushBackdrop()
+
+                ScrollView(showsIndicators: false) {
+                    VStack(spacing: 24) {
+                        VStack(spacing: 16) {
+                            ZStack {
+                                Circle()
+                                    .fill(HushPalette.surfaceRaised)
+                                    .frame(width: 64, height: 64)
+                                Image(systemName: icon)
+                                    .font(.title2.weight(.semibold))
+                                    .foregroundStyle(HushPalette.accent)
+                            }
+
+                            TextField("Preset name", text: $name)
+                                .font(.title3.weight(.semibold))
+                                .multilineTextAlignment(.center)
+                                .foregroundStyle(HushPalette.textPrimary)
+                                .focused($nameFieldFocused)
+                        }
+                        .padding(.top, 8)
+
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text("Icon")
+                                .font(.headline)
+                                .foregroundStyle(HushPalette.textPrimary)
+
+                            LazyVGrid(columns: columns, spacing: 12) {
+                                ForEach(iconChoices, id: \.self) { choice in
+                                    let selected = icon == choice
+                                    Button {
+                                        icon = choice
+                                    } label: {
+                                        Image(systemName: choice)
+                                            .font(.body.weight(.semibold))
+                                            .foregroundStyle(selected ? Color.black : HushPalette.textPrimary)
+                                            .frame(width: 44, height: 44)
+                                            .background(
+                                                Circle()
+                                                    .fill(selected ? HushPalette.accent : HushPalette.surfaceRaised)
+                                            )
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
+                        }
+                        .padding(20)
+                        .hushPanel(fill: HushPalette.surface.opacity(0.92))
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.top, 16)
+                    .padding(.bottom, 28)
+                }
+            }
+            .navigationTitle("Save Preset")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                        .foregroundStyle(HushPalette.textSecondary)
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") { onSave() }
+                        .fontWeight(.semibold)
+                        .foregroundStyle(name.isEmpty ? HushPalette.textMuted : HushPalette.accentSoft)
+                        .disabled(name.isEmpty)
+                }
+            }
+            .onAppear { nameFieldFocused = true }
+        }
+        .tint(HushPalette.accentSoft)
     }
 }

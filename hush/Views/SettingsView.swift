@@ -2,6 +2,8 @@ import SwiftUI
 import AVFoundation
 
 struct SettingsView: View {
+    let viewModel: PlayerViewModel
+
     @AppStorage("autoResumeLast") private var autoResumeLast = false
     @AppStorage("fadeDuration") private var fadeDuration: Double = 0.5
     @AppStorage("binauralCarrier") private var binauralCarrier: Double = 200
@@ -52,7 +54,7 @@ struct SettingsView: View {
                                 .accessibilityLabel("Binaural carrier frequency")
                                 .accessibilityValue("\(Int(binauralCarrier)) hertz")
                                 .onChange(of: binauralCarrier) { _, newValue in
-                                    AudioEngine.shared.setDefaultBinauralCarrier(Float(newValue))
+                                    viewModel.setBinauralCarrier(Float(newValue))
                                 }
                         }
 
@@ -69,7 +71,7 @@ struct SettingsView: View {
                         HStack {
                             Text("Sample rate")
                             Spacer()
-                            Text("\(Int(AudioEngine.shared.actualSampleRate)) Hz")
+                            Text("\(Int(viewModel.actualSampleRate)) Hz")
                                 .foregroundStyle(HushPalette.textSecondary)
                         }
                         HStack {
@@ -107,7 +109,7 @@ struct SettingsView: View {
                 .tint(HushPalette.accentSoft)
             }
             .onReceive(NotificationCenter.default.publisher(for: AVAudioSession.routeChangeNotification)) { _ in
-                headphonesConnected = AudioEngine.headphonesConnected
+                headphonesConnected = viewModel.headphonesConnected
             }
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
