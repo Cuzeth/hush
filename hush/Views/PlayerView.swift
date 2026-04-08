@@ -157,6 +157,11 @@ struct PlayerView: View {
         } message: {
             Text("Binaural beats require headphones to work. Each ear must receive a different frequency without crosstalk.")
         }
+        .alert("Headphones Disconnected", isPresented: $viewModel.showBinauralRouteWarning) {
+            Button("OK") {}
+        } message: {
+            Text("Binaural beats were paused because headphones were disconnected. Reconnect headphones and press play to resume.")
+        }
         .alert("Save Preset", isPresented: $showSavePreset) {
             TextField("Preset name", text: $presetName)
             Button("Save") {

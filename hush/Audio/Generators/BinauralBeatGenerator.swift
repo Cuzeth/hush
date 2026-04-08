@@ -1,58 +1,78 @@
 import AVFoundation
+import Synchronization
 
 // Binaural beats: two sine oscillators at slightly different frequencies,
 // one per stereo channel. Headphones required — no channel crosstalk allowed.
 // Carrier: 200-400 Hz. Difference frequency determines brainwave target.
+//
+// Overrides generateStereo to produce different content per channel.
+// generateMono outputs the carrier only (binaural effect requires stereo).
 final class BinauralBeatGenerator: SoundGenerator, @unchecked Sendable {
-    nonisolated(unsafe) var volume: Float = 1.0
-    nonisolated(unsafe) var carrierFrequency: Float = 200.0
-    nonisolated(unsafe) var beatFrequency: Float = 13.0 // SMR default
+    private let _volume = Atomic<UInt32>(0x3F80_0000)
+    private let _carrierFrequency = Atomic<UInt32>(0x4348_0000) // 200.0f
+    private let _beatFrequency = Atomic<UInt32>(0x4150_0000)    // 13.0f
 
-    private var phaseLeft: Double = 0
-    private var phaseRight: Double = 0
-    private let sampleRate = AudioConstants.sampleRate
+    nonisolated var volume: Float {
+        get { Float(bitPattern: _volume.load(ordering: .relaxed)) }
+        set { _volume.store(newValue.bitPattern, ordering: .relaxed) }
+    }
+
+    nonisolated var carrierFrequency: Float {
+        get { Float(bitPattern: _carrierFrequency.load(ordering: .relaxed)) }
+        set { _carrierFrequency.store(newValue.bitPattern, ordering: .relaxed) }
+    }
+
+    nonisolated var beatFrequency: Float {
+        get { Float(bitPattern: _beatFrequency.load(ordering: .relaxed)) }
+        set { _beatFrequency.store(newValue.bitPattern, ordering: .relaxed) }
+    }
+
+    nonisolated(unsafe) private var phaseLeft: Double = 0
+    nonisolated(unsafe) private var phaseRight: Double = 0
+    private let sampleRate: Double
+
+    nonisolated init(sampleRate: Double = 44100) {
+        self.sampleRate = sampleRate
+    }
 
     nonisolated func setRange(_ range: BinauralRange) {
         beatFrequency = range.defaultFrequency
     }
 
-    nonisolated func generateSamples(into buffer: UnsafeMutablePointer<Float>, frameCount: Int, stereo: Bool) {
-        let vol = volume
-        let carrier = Double(carrierFrequency)
-        let beat = Double(beatFrequency)
-        let leftFreq = carrier
-        let rightFreq = carrier + beat
+    // Mono fallback: carrier tone only (no binaural effect)
+    nonisolated func generateMono(into buffer: UnsafeMutablePointer<Float>, frameCount: Int) {
+        let vol = Float(bitPattern: _volume.load(ordering: .relaxed))
+        let carrier = Double(Float(bitPattern: _carrierFrequency.load(ordering: .relaxed)))
         let twoPi = 2.0 * Double.pi
+        let inc = twoPi * carrier / sampleRate
 
-        let phaseIncrementLeft = twoPi * leftFreq / sampleRate
-        let phaseIncrementRight = twoPi * rightFreq / sampleRate
-
-        if stereo {
-            for i in 0..<frameCount {
-                let leftSample = Float(sin(phaseLeft)) * vol
-                let rightSample = Float(sin(phaseRight)) * vol
-                buffer[i * 2] = leftSample
-                buffer[i * 2 + 1] = rightSample
-
-                phaseLeft += phaseIncrementLeft
-                phaseRight += phaseIncrementRight
-
-                // Keep phase in [0, 2π) to prevent floating-point precision loss
-                if phaseLeft >= twoPi { phaseLeft -= twoPi }
-                if phaseRight >= twoPi { phaseRight -= twoPi }
-            }
-        } else {
-            // Mono fallback: just the carrier (binaural effect requires stereo)
-            for i in 0..<frameCount {
-                buffer[i] = Float(sin(phaseLeft)) * vol
-                phaseLeft += phaseIncrementLeft
-                if phaseLeft >= twoPi { phaseLeft -= twoPi }
-            }
+        for i in 0..<frameCount {
+            buffer[i] = Float(sin(phaseLeft)) * vol
+            phaseLeft += inc
+            if phaseLeft >= twoPi { phaseLeft -= twoPi }
         }
     }
 
-    nonisolated func reset() {
-        phaseLeft = 0
-        phaseRight = 0
+    // True binaural: different frequency per ear
+    nonisolated func generateStereo(left: UnsafeMutablePointer<Float>,
+                                     right: UnsafeMutablePointer<Float>,
+                                     frameCount: Int) {
+        let vol = Float(bitPattern: _volume.load(ordering: .relaxed))
+        let carrier = Double(Float(bitPattern: _carrierFrequency.load(ordering: .relaxed)))
+        let beat = Double(Float(bitPattern: _beatFrequency.load(ordering: .relaxed)))
+        let twoPi = 2.0 * Double.pi
+
+        let incL = twoPi * carrier / sampleRate
+        let incR = twoPi * (carrier + beat) / sampleRate
+
+        for i in 0..<frameCount {
+            left[i] = Float(sin(phaseLeft)) * vol
+            right[i] = Float(sin(phaseRight)) * vol
+
+            phaseLeft += incL
+            phaseRight += incR
+            if phaseLeft >= twoPi { phaseLeft -= twoPi }
+            if phaseRight >= twoPi { phaseRight -= twoPi }
+        }
     }
 }

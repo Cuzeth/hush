@@ -23,5 +23,3 @@ struct SoundSource: Identifiable, Codable, Hashable {
         case id, type, volume, isActive, binauralRange, binauralFrequency
     }
 }
-
-extension BinauralRange: Codable {}

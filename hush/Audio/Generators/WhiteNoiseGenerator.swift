@@ -1,21 +1,24 @@
 import AVFoundation
+import Synchronization
 
 final class WhiteNoiseGenerator: SoundGenerator, @unchecked Sendable {
-    nonisolated(unsafe) var volume: Float = 1.0
+    private let _volume = Atomic<UInt32>(0x3F80_0000) // 1.0f
 
-    nonisolated func generateSamples(into buffer: UnsafeMutablePointer<Float>, frameCount: Int, stereo: Bool) {
-        let vol = volume
-        if stereo {
-            // Stereo: interleaved L R L R ...
-            for i in 0..<frameCount {
-                let sample = Float.random(in: -1.0...1.0) * vol
-                buffer[i * 2] = sample
-                buffer[i * 2 + 1] = sample
-            }
-        } else {
-            for i in 0..<frameCount {
-                buffer[i] = Float.random(in: -1.0...1.0) * vol
-            }
+    nonisolated var volume: Float {
+        get { Float(bitPattern: _volume.load(ordering: .relaxed)) }
+        set { _volume.store(newValue.bitPattern, ordering: .relaxed) }
+    }
+
+    nonisolated(unsafe) private var rng: AudioRNG
+
+    nonisolated init(sampleRate: Double = 44100) {
+        self.rng = AudioRNG()
+    }
+
+    nonisolated func generateMono(into buffer: UnsafeMutablePointer<Float>, frameCount: Int) {
+        let vol = Float(bitPattern: _volume.load(ordering: .relaxed))
+        for i in 0..<frameCount {
+            buffer[i] = rng.nextFloat() * vol
         }
     }
 }

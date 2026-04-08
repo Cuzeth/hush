@@ -1,5 +1,6 @@
 import SwiftUI
 import SwiftData
+import AudioToolbox
 
 @Observable
 final class PlayerViewModel {
@@ -11,9 +12,19 @@ final class PlayerViewModel {
     var showSettings = false
     var showHeadphoneWarning = false
 
+    var showBinauralRouteWarning = false
+
     let timerState = TimerState()
     private var timerTask: Task<Void, Never>?
     private let engine = AudioEngine.shared
+
+    init() {
+        engine.onBinauralHeadphonesDisconnected = { [weak self] in
+            guard let self else { return }
+            self.isPlaying = false
+            self.showBinauralRouteWarning = true
+        }
+    }
 
     // MARK: - Preset Loading
 

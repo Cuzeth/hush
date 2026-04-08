@@ -104,7 +104,7 @@ struct TimerView: View {
 
             Divider()
 
-            Toggle("Play chime when done", isOn: $viewModel.timerState.playChimeOnEnd)
+            Toggle("Play chime when done", isOn: Bindable(viewModel.timerState).playChimeOnEnd)
                 .font(.subheadline)
 
             Text("Sound fades out over the final 10 seconds")

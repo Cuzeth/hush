@@ -1,23 +1,23 @@
 import Foundation
 
 enum AudioConstants {
-    static let sampleRate: Double = 44100.0
-    static let defaultFadeDuration: TimeInterval = 0.5
-    static let timerFadeOutDuration: TimeInterval = 10.0
-    static let maxSimultaneousSources = 6
-    static let crossfadeDurationMs: Double = 100.0
-    static var crossfadeSamples: Int { Int(sampleRate * crossfadeDurationMs / 1000.0) }
+    nonisolated static let sampleRate: Double = 44100.0
+    nonisolated static let defaultFadeDuration: TimeInterval = 0.5
+    nonisolated static let timerFadeOutDuration: TimeInterval = 10.0
+    nonisolated static let maxSimultaneousSources = 6
+    nonisolated static let crossfadeDurationMs: Double = 100.0
+    nonisolated static var crossfadeSamples: Int { Int(sampleRate * crossfadeDurationMs / 1000.0) }
 }
 
-enum BinauralRange: String, CaseIterable, Identifiable {
+enum BinauralRange: String, CaseIterable, Identifiable, Codable {
     case alpha = "Alpha"
     case smr = "SMR"
     case beta = "Beta"
     case gamma = "Gamma"
 
-    var id: String { rawValue }
+    nonisolated var id: String { rawValue }
 
-    var frequencyRange: ClosedRange<Float> {
+    nonisolated var frequencyRange: ClosedRange<Float> {
         switch self {
         case .alpha: return 8...13
         case .smr: return 12...15
@@ -26,7 +26,7 @@ enum BinauralRange: String, CaseIterable, Identifiable {
         }
     }
 
-    var defaultFrequency: Float {
+    nonisolated var defaultFrequency: Float {
         switch self {
         case .alpha: return 10
         case .smr: return 13
@@ -35,7 +35,7 @@ enum BinauralRange: String, CaseIterable, Identifiable {
         }
     }
 
-    var description: String {
+    nonisolated var description: String {
         switch self {
         case .alpha: return "Calm Focus (8-13 Hz)"
         case .smr: return "ADHD Sweet Spot (12-15 Hz)"
@@ -59,9 +59,9 @@ enum SoundType: String, Codable, CaseIterable, Identifiable {
     case wind = "Wind"
     case stream = "Stream"
 
-    var id: String { rawValue }
+    nonisolated var id: String { rawValue }
 
-    var icon: String {
+    nonisolated var icon: String {
         switch self {
         case .whiteNoise: return "waveform"
         case .pinkNoise: return "waveform.path"
@@ -78,7 +78,7 @@ enum SoundType: String, Codable, CaseIterable, Identifiable {
         }
     }
 
-    var isGenerated: Bool {
+    nonisolated var isGenerated: Bool {
         switch self {
         case .whiteNoise, .pinkNoise, .brownNoise, .grayNoise, .binauralBeats:
             return true
@@ -87,7 +87,7 @@ enum SoundType: String, Codable, CaseIterable, Identifiable {
         }
     }
 
-    var sampleFileName: String? {
+    nonisolated var sampleFileName: String? {
         switch self {
         case .rain: return "rain"
         case .ocean: return "ocean"
@@ -109,13 +109,13 @@ enum TimerDuration: Int, CaseIterable, Identifiable {
     case sixty = 60
     case ninety = 90
 
-    var id: Int { rawValue }
+    nonisolated var id: Int { rawValue }
 
-    var label: String {
+    nonisolated var label: String {
         "\(rawValue) min"
     }
 
-    var seconds: TimeInterval {
+    nonisolated var seconds: TimeInterval {
         TimeInterval(rawValue) * 60
     }
 }
