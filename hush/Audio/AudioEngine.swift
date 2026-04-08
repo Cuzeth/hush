@@ -93,7 +93,7 @@ final class AudioEngine: @unchecked Sendable {
     }
 
     private func configureEngineGraph() {
-        engine.autoShutdownEnabled = true
+        engine.isAutoShutdownEnabled = true
         engine.attach(mixerNode)
 
         let hwFormat = engine.outputNode.inputFormat(forBus: 0)
