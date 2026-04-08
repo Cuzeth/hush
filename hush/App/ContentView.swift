@@ -4,21 +4,33 @@ import SwiftData
 struct ContentView: View {
     @State private var viewModel = PlayerViewModel()
     @AppStorage("autoResumeLast") private var autoResumeLast = false
+    @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
-        PlayerView(viewModel: viewModel)
-            .preferredColorScheme(.dark)
-            .onAppear {
-                AudioEngine.shared.configureAudioSession()
-                if autoResumeLast {
-                    _ = viewModel.restoreLastSession()
+        Group {
+            if hasCompletedOnboarding {
+                PlayerView(viewModel: viewModel)
+            } else {
+                OnboardingView { selectedPreset in
+                    hasCompletedOnboarding = true
+                    if let preset = selectedPreset {
+                        viewModel.loadPreset(preset)
+                    }
                 }
-                viewModel.handleScenePhaseChange(.active)
             }
-            .onChange(of: scenePhase) { _, newPhase in
-                viewModel.handleScenePhaseChange(newPhase)
+        }
+        .preferredColorScheme(.dark)
+        .onAppear {
+            AudioEngine.shared.configureAudioSession()
+            if hasCompletedOnboarding && autoResumeLast {
+                _ = viewModel.restoreLastSession()
             }
+            viewModel.handleScenePhaseChange(.active)
+        }
+        .onChange(of: scenePhase) { _, newPhase in
+            viewModel.handleScenePhaseChange(newPhase)
+        }
     }
 }
 

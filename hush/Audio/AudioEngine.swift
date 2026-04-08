@@ -407,11 +407,18 @@ final class AudioEngine: @unchecked Sendable {
     // MARK: - Playback Control
 
     func start() {
-        guard !isPlaying else { return }
+        // Cancel any in-progress fade-out so we don't get stopped mid-restart
+        if isFading {
+            isFading = false
+            fadeCompletion = nil
+        }
+
         configureAudioSession()
 
         do {
-            try engine.start()
+            if !engine.isRunning {
+                try engine.start()
+            }
             isPlaying = true
             startAllPlayerNodes()
             fadeIn()
@@ -423,11 +430,11 @@ final class AudioEngine: @unchecked Sendable {
 
     func stop() {
         guard isPlaying else { return }
+        isPlaying = false
         fadeOut { [weak self] in
             guard let self else { return }
             self.pauseAllPlayerNodes()
             self.engine.stop()
-            self.isPlaying = false
             self.clearNowPlaying()
         }
     }

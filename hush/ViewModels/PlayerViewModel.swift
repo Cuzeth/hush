@@ -1,6 +1,7 @@
 import SwiftUI
 import SwiftData
 import AudioToolbox
+import UserNotifications
 
 @MainActor
 @Observable
@@ -16,12 +17,12 @@ final class PlayerViewModel {
     var showBinauralRouteWarning = false
 
     let timerState = TimerState()
-    private var timerTask: Task<Void, Never>?
-    private let engine = AudioEngine.shared
-    private static let lastSessionKey = "lastSessionSources"
-    private static let timerEndDateKey = "timerEndDate"
-    private static let timerDurationKey = "timerDuration"
-    private static let timerPlayChimeKey = "timerPlayChimeOnEnd"
+    @ObservationIgnored private var timerTask: Task<Void, Never>?
+    @ObservationIgnored private let engine = AudioEngine.shared
+    @ObservationIgnored private static let lastSessionKey = "lastSessionSources"
+    @ObservationIgnored private static let timerEndDateKey = "timerEndDate"
+    @ObservationIgnored private static let timerDurationKey = "timerDuration"
+    @ObservationIgnored private static let timerPlayChimeKey = "timerPlayChimeOnEnd"
 
     init() {
         engine.onBinauralHeadphonesDisconnected = { [weak self] in
@@ -101,18 +102,11 @@ final class PlayerViewModel {
         engine.start()
         isPlaying = true
         applyTimerFadeIfNeeded()
-
-        let impact = UIImpactFeedbackGenerator(style: .medium)
-        impact.impactOccurred()
     }
 
     func stop() {
         engine.stop()
         isPlaying = false
-        stopTimer()
-
-        let impact = UIImpactFeedbackGenerator(style: .light)
-        impact.impactOccurred()
     }
 
     func togglePlayback() {
@@ -135,6 +129,7 @@ final class PlayerViewModel {
         persistTimerPreferences()
         persistTimerState()
         startTimerUpdates()
+        scheduleTimerNotification(duration: duration)
     }
 
     func stopTimer() {
@@ -143,10 +138,12 @@ final class PlayerViewModel {
         timerState.clear()
         clearPersistedTimerState()
         engine.setMasterVolume(1.0)
+        cancelTimerNotification()
     }
 
     private func timerExpired() {
         clearPersistedTimerState()
+        cancelTimerNotification()
         stop()
 
         if timerState.playChimeOnEnd {
@@ -155,8 +152,30 @@ final class PlayerViewModel {
     }
 
     private func playChime() {
-        // System notification sound as a gentle chime
-        AudioServicesPlaySystemSound(1007) // kSystemSoundID_Notification
+        AudioServicesPlaySystemSound(1007)
+    }
+
+    // MARK: - Timer Notification (fires when app is backgrounded)
+
+    private static let timerNotificationID = "hush.timer.expired"
+
+    private func scheduleTimerNotification(duration: TimeInterval) {
+        let center = UNUserNotificationCenter.current()
+        center.requestAuthorization(options: [.alert, .sound]) { _, _ in }
+
+        let content = UNMutableNotificationContent()
+        content.title = "Focus session complete"
+        content.body = "Your Hush timer has finished. Nice work."
+        content.sound = .default
+
+        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: max(1, duration), repeats: false)
+        let request = UNNotificationRequest(identifier: Self.timerNotificationID, content: content, trigger: trigger)
+        center.add(request)
+    }
+
+    private func cancelTimerNotification() {
+        UNUserNotificationCenter.current()
+            .removePendingNotificationRequests(withIdentifiers: [Self.timerNotificationID])
     }
 
     // MARK: - Preset Persistence
