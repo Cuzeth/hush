@@ -31,6 +31,19 @@ final class PlayerViewModel {
             self.showBinauralRouteWarning = true
         }
 
+        engine.onPlaybackStateChanged = { [weak self] playing in
+            guard let self else { return }
+            self.isPlaying = playing
+        }
+
+        engine.onNextPreset = { [weak self] in
+            self?.cyclePreset(forward: true)
+        }
+
+        engine.onPreviousPreset = { [weak self] in
+            self?.cyclePreset(forward: false)
+        }
+
         timerState.playChimeOnEnd = UserDefaults.standard.object(forKey: Self.timerPlayChimeKey) as? Bool ?? true
         restorePersistedTimerIfNeeded()
     }
@@ -56,6 +69,24 @@ final class PlayerViewModel {
         currentPreset = nil
         applyCurrentSources()
         play()
+    }
+
+    func cyclePreset(forward: Bool) {
+        let presets = Preset.builtIn
+        guard !presets.isEmpty else { return }
+
+        let currentIdx = currentPreset.flatMap { cp in
+            presets.firstIndex(where: { $0.id == cp.id })
+        }
+        let nextIdx: Int
+        if let idx = currentIdx {
+            nextIdx = forward
+                ? (idx + 1) % presets.count
+                : (idx - 1 + presets.count) % presets.count
+        } else {
+            nextIdx = forward ? 0 : presets.count - 1
+        }
+        loadPreset(presets[nextIdx])
     }
 
     // MARK: - Source Management
@@ -99,6 +130,7 @@ final class PlayerViewModel {
     func play() {
         if activeSources.isEmpty { return }
         applyCurrentSources()
+        engine.currentPresetName = currentPreset?.name ?? "Custom Mix"
         engine.start()
         isPlaying = true
         applyTimerFadeIfNeeded()
@@ -126,6 +158,9 @@ final class PlayerViewModel {
 
     func startTimer(duration: TimeInterval) {
         timerState.start(duration: duration)
+        if !isPlaying && !activeSources.isEmpty {
+            play()
+        }
         persistTimerPreferences()
         persistTimerState()
         startTimerUpdates()

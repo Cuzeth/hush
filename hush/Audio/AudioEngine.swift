@@ -54,8 +54,14 @@ final class AudioEngine: @unchecked Sendable {
     private var mediaServicesResetObserver: Any?
     private var engineConfigurationObserver: Any?
 
-    // Callback for route-change events the UI needs to handle
+    // Callbacks for events the UI needs to handle
     var onBinauralHeadphonesDisconnected: (() -> Void)?
+    var onPlaybackStateChanged: ((Bool) -> Void)?
+    var onNextPreset: (() -> Void)?
+    var onPreviousPreset: (() -> Void)?
+
+    // Displayed in Now Playing / lock screen
+    var currentPresetName: String = "Hush"
 
     private init() {
         configureAudioSession()
@@ -204,6 +210,7 @@ final class AudioEngine: @unchecked Sendable {
             } else {
                 isPlaying = false
                 clearNowPlaying()
+                onPlaybackStateChanged?(false)
             }
 
         @unknown default:
@@ -569,13 +576,25 @@ final class AudioEngine: @unchecked Sendable {
             return .success
         }
 
+        center.nextTrackCommand.isEnabled = true
+        center.nextTrackCommand.addTarget { [weak self] _ in
+            DispatchQueue.main.async { self?.onNextPreset?() }
+            return .success
+        }
+
+        center.previousTrackCommand.isEnabled = true
+        center.previousTrackCommand.addTarget { [weak self] _ in
+            DispatchQueue.main.async { self?.onPreviousPreset?() }
+            return .success
+        }
+
         remoteCommandsConfigured = true
     }
 
     private func updateNowPlaying() {
         var info = [String: Any]()
-        info[MPMediaItemPropertyTitle] = "Hush"
-        info[MPMediaItemPropertyArtist] = "Focus Sounds"
+        info[MPMediaItemPropertyTitle] = currentPresetName
+        info[MPMediaItemPropertyArtist] = "Hush — Focus Sounds"
         info[MPNowPlayingInfoPropertyIsLiveStream] = true
         info[MPNowPlayingInfoPropertyPlaybackRate] = 1.0
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info

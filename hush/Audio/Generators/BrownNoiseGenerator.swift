@@ -26,7 +26,7 @@ final class BrownNoiseGenerator: SoundGenerator, @unchecked Sendable {
             let white = rng.nextFloat()
             lastOutput = (lastOutput + 0.02 * white) / 1.02
             let filtered = dcBlocker.process(lastOutput)
-            buffer[i] = filtered * 3.5 * vol
+            buffer[i] = min(1, max(-1, filtered * 3.5 * vol))
         }
     }
 }

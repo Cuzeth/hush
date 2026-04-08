@@ -8,7 +8,6 @@ enum AudioConstants {
     nonisolated static let maxSimultaneousSources = 6
     nonisolated static let crossfadeDurationMs: Double = 100.0
     nonisolated static let preferredIOBufferFrameCount: Double = 2048.0
-    nonisolated static var crossfadeSamples: Int { Int(sampleRate * crossfadeDurationMs / 1000.0) }
 }
 
 enum BinauralRange: String, CaseIterable, Identifiable, Codable {

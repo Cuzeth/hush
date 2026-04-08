@@ -24,7 +24,9 @@ struct ContentView: View {
         .onAppear {
             AudioEngine.shared.configureAudioSession()
             if hasCompletedOnboarding && autoResumeLast {
-                _ = viewModel.restoreLastSession()
+                if viewModel.restoreLastSession() {
+                    viewModel.play()
+                }
             }
             viewModel.handleScenePhaseChange(.active)
         }
