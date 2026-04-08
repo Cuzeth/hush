@@ -1,0 +1,29 @@
+import Foundation
+
+@Observable
+final class TimerState {
+    var isRunning = false
+    var selectedDuration: TimeInterval = TimerDuration.twentyFive.seconds
+    var remainingSeconds: TimeInterval = 0
+    var playChimeOnEnd = true
+
+    var progress: Double {
+        guard selectedDuration > 0 else { return 0 }
+        return 1.0 - (remainingSeconds / selectedDuration)
+    }
+
+    var displayTime: String {
+        let minutes = Int(remainingSeconds) / 60
+        let seconds = Int(remainingSeconds) % 60
+        return String(format: "%d:%02d", minutes, seconds)
+    }
+
+    var isFadingOut: Bool {
+        isRunning && remainingSeconds <= AudioConstants.timerFadeOutDuration && remainingSeconds > 0
+    }
+
+    var fadeMultiplier: Float {
+        guard isFadingOut else { return 1.0 }
+        return Float(remainingSeconds / AudioConstants.timerFadeOutDuration)
+    }
+}
