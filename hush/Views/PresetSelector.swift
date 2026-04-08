@@ -9,6 +9,11 @@ struct PresetSelector: View {
     @Query(sort: \SavedPreset.createdAt, order: .reverse)
     private var savedPresets: [SavedPreset]
 
+    @Environment(\.modelContext) private var modelContext
+
+    @State private var editingPreset: SavedPreset?
+    @State private var editName = ""
+
     private var allPresets: [Preset] {
         Preset.builtIn + savedPresets.map { $0.toPreset() }
     }
@@ -31,8 +36,8 @@ struct PresetSelector: View {
             }
             .buttonStyle(.plain)
 
-            // Preset rows
-            ForEach(allPresets) { preset in
+            // Built-in preset rows
+            ForEach(Preset.builtIn) { preset in
                 let selected = selectedPreset?.id == preset.id
                 Button { onSelect(preset) } label: {
                     presetRow(
@@ -44,6 +49,55 @@ struct PresetSelector: View {
                 }
                 .buttonStyle(.plain)
             }
+
+            // Saved preset rows with edit/delete
+            ForEach(savedPresets) { saved in
+                let preset = saved.toPreset()
+                let selected = selectedPreset?.id == preset.id
+                Button { onSelect(preset) } label: {
+                    presetRow(
+                        icon: preset.icon,
+                        name: preset.name,
+                        detail: presetSummary(preset),
+                        isSelected: selected
+                    )
+                }
+                .buttonStyle(.plain)
+                .contextMenu {
+                    Button {
+                        editName = saved.name
+                        editingPreset = saved
+                    } label: {
+                        Label("Rename", systemImage: "pencil")
+                    }
+                    Button(role: .destructive) {
+                        deletePreset(saved)
+                    } label: {
+                        Label("Delete", systemImage: "trash")
+                    }
+                }
+            }
+        }
+        .alert("Rename Preset", isPresented: Binding(
+            get: { editingPreset != nil },
+            set: { if !$0 { editingPreset = nil } }
+        )) {
+            TextField("Name", text: $editName)
+            Button("Save") {
+                if let preset = editingPreset, !editName.isEmpty {
+                    preset.name = editName
+                }
+                editingPreset = nil
+            }
+            Button("Cancel", role: .cancel) {
+                editingPreset = nil
+            }
+        }
+    }
+
+    private func deletePreset(_ saved: SavedPreset) {
+        withAnimation(.easeInOut(duration: 0.3)) {
+            modelContext.delete(saved)
         }
     }
 

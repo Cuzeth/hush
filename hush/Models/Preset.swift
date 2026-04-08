@@ -72,12 +72,14 @@ struct Preset: Identifiable, Codable {
 // SwiftData model for user-saved presets
 @Model
 final class SavedPreset {
+    var stableID: UUID
     var name: String
     var icon: String
     var sourcesData: Data
     var createdAt: Date
 
     init(name: String, icon: String, sources: [SoundSource]) {
+        self.stableID = UUID()
         self.name = name
         self.icon = icon
         self.sourcesData = (try? JSONEncoder().encode(sources)) ?? Data()
@@ -90,6 +92,6 @@ final class SavedPreset {
     }
 
     func toPreset() -> Preset {
-        Preset(name: name, icon: icon, sources: sources, isBuiltIn: false)
+        Preset(id: stableID, name: name, icon: icon, sources: sources, isBuiltIn: false)
     }
 }
