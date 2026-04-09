@@ -28,6 +28,7 @@ final class SampleLoopPlayer: @unchecked Sendable {
     // MARK: - Loading from SoundAsset
 
     nonisolated func loadAsset(_ asset: SoundAsset, targetSampleRate: Double) {
+        guard !isLoaded else { return }
         assetID = asset.id
 
         // Search for the file in the bundle subdirectory
