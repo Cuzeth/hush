@@ -272,11 +272,18 @@ final class AudioEngine: @unchecked Sendable {
 
     // MARK: - Source Management
 
+    // MARK: - Thread Safety
+
+    private func assertMainThread(_ fn: String = #function) {
+        dispatchPrecondition(condition: .onQueue(.main))
+    }
+
     func addSource(id: UUID, type: SoundType, volume: Float,
                    binauralRange: BinauralRange? = nil,
                    binauralFrequency: Float? = nil,
                    toneFrequency: Float? = nil,
                    assetID: String? = nil) {
+        assertMainThread()
         let config = SourceConfiguration(
             type: type,
             volume: volume,
@@ -455,6 +462,7 @@ final class AudioEngine: @unchecked Sendable {
     }
 
     func removeSource(id: UUID) {
+        assertMainThread()
         sourceConfigurations.removeValue(forKey: id)
 
         // Fade out then remove
@@ -488,6 +496,7 @@ final class AudioEngine: @unchecked Sendable {
     }
 
     func removeAllSources() {
+        assertMainThread()
         sourceConfigurations.removeAll()
         removeAllAttachedSources()
     }
@@ -498,6 +507,7 @@ final class AudioEngine: @unchecked Sendable {
     }
 
     func setVolume(_ volume: Float, for id: UUID) {
+        assertMainThread()
         if var config = sourceConfigurations[id] {
             config.volume = volume
             sourceConfigurations[id] = config
@@ -509,6 +519,7 @@ final class AudioEngine: @unchecked Sendable {
     }
 
     func updateBinauralParameters(for id: UUID, range: BinauralRange?, frequency: Float?) {
+        assertMainThread()
         if var config = sourceConfigurations[id] {
             if let range { config.binauralRange = range }
             if let frequency { config.binauralFrequency = frequency }
@@ -528,6 +539,7 @@ final class AudioEngine: @unchecked Sendable {
     }
 
     func setDefaultBinauralCarrier(_ frequency: Float) {
+        assertMainThread()
         for generator in generators.values {
             if let binaural = generator as? BinauralBeatGenerator {
                 binaural.carrierFrequency = frequency
@@ -540,6 +552,7 @@ final class AudioEngine: @unchecked Sendable {
     }
 
     func updateToneFrequency(for id: UUID, frequency: Float) {
+        assertMainThread()
         if var config = sourceConfigurations[id] {
             config.toneFrequency = frequency
             sourceConfigurations[id] = config
@@ -605,6 +618,7 @@ final class AudioEngine: @unchecked Sendable {
     // MARK: - Playback Control
 
     func start() {
+        assertMainThread()
         if isFading {
             isFading = false
             fadeCompletion = nil
@@ -626,6 +640,7 @@ final class AudioEngine: @unchecked Sendable {
     }
 
     func stop() {
+        assertMainThread()
         guard isPlaying else { return }
         isPlaying = false
         fadeOut { [weak self] in
@@ -666,6 +681,7 @@ final class AudioEngine: @unchecked Sendable {
     // MARK: - Fading (via mixerNode.outputVolume — never touches render callbacks)
 
     func setMasterVolume(_ vol: Float) {
+        assertMainThread()
         mixerNode.outputVolume = max(0, min(1, vol))
     }
 
@@ -714,6 +730,7 @@ final class AudioEngine: @unchecked Sendable {
     }
 
     func applyTimerFade(_ multiplier: Float) {
+        assertMainThread()
         mixerNode.outputVolume = max(0, min(1, multiplier))
     }
 
