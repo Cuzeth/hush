@@ -449,29 +449,31 @@ final class AudioEngine: @unchecked Sendable {
     }
 
     private func addLegacySampleSource(id: UUID, config: SourceConfiguration, fileName: String) {
-        let player = SampleLoopPlayer(
-            fileName: fileName,
-            sampleRate: actualSampleRate
-        )
-        player.volume = config.volume
-        samplePlayers[id] = player
-
+        let sr = actualSampleRate
         let wasAlreadyPlaying = isPlaying
         let playerNode = AVAudioPlayerNode()
         engine.attach(playerNode)
         engine.connect(playerNode, to: mixerNode, format: format)
         playerNode.volume = wasAlreadyPlaying ? 0 : config.volume
-
-        if let buffer = player.loopBuffer {
-            playerNode.scheduleBuffer(buffer, at: nil, options: .loops)
-        }
-
         playerNodes[id] = playerNode
 
-        if isPlaying {
-            playerNode.play()
-            if wasAlreadyPlaying {
-                fadeInSource(id: id, targetVolume: config.volume)
+        loadingQueue.async { [weak self] in
+            let player = SampleLoopPlayer(fileName: fileName, sampleRate: sr)
+            player.volume = config.volume
+
+            DispatchQueue.main.async { [weak self] in
+                guard let self, let currentNode = self.playerNodes[id] else { return }
+                self.samplePlayers[id] = player
+
+                if let buffer = player.loopBuffer {
+                    currentNode.scheduleBuffer(buffer, at: nil, options: .loops)
+                    if self.isPlaying {
+                        currentNode.play()
+                        if wasAlreadyPlaying {
+                            self.fadeInSource(id: id, targetVolume: config.volume)
+                        }
+                    }
+                }
             }
         }
 
