@@ -45,11 +45,6 @@
 			path = hushTests;
 			sourceTree = "<group>";
 		};
-		E4D787462F86458600B40561 /* hushUITests */ = {
-			isa = PBXFileSystemSynchronizedRootGroup;
-			path = hushUITests;
-			sourceTree = "<group>";
-		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -75,7 +70,6 @@
 			children = (
 				E4D7872C2F86458500B40561 /* hush */,
 				E4D7873C2F86458600B40561 /* hushTests */,
-				E4D787462F86458600B40561 /* hushUITests */,
 				E4D7872B2F86458500B40561 /* Products */,
 			);
 			sourceTree = "<group>";
