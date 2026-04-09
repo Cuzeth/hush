@@ -1,5 +1,8 @@
 import AVFoundation
 import MediaPlayer
+import os.log
+
+private let logger = Logger(subsystem: "net.hush.audio", category: "AudioEngine")
 
 // Central audio engine managing all sound generation and playback.
 // Generated sounds use AVAudioSourceNode (render callback).
@@ -101,9 +104,7 @@ final class AudioEngine: @unchecked Sendable {
             )
             sessionCategoryConfigured = true
         } catch {
-            #if DEBUG
-            print("[Hush] Audio session configuration failed: \(error)")
-            #endif
+            logger.error("Audio session configuration failed: \(error.localizedDescription)")
         }
     }
 
@@ -112,9 +113,7 @@ final class AudioEngine: @unchecked Sendable {
         do {
             try AVAudioSession.sharedInstance().setActive(true)
         } catch {
-            #if DEBUG
-            print("[Hush] Audio session activation failed: \(error)")
-            #endif
+            logger.error("Audio session activation failed: \(error.localizedDescription)")
         }
     }
 
@@ -325,17 +324,18 @@ final class AudioEngine: @unchecked Sendable {
         generator.volume = config.volume
         generators[id] = generator
 
-        // Use Unmanaged to avoid ARC retain/release on the real-time audio thread.
-        // The generator is kept alive by the `generators` dictionary; the render
-        // callback must not introduce ARC traffic via existential capture.
-        let unmanagedGen = Unmanaged.passUnretained(generator)
+        // Capture an unretained reference to avoid ARC retain/release on the
+        // real-time audio thread. The generator is kept alive by the `generators`
+        // dictionary. We go through AnyObject because Unmanaged requires a
+        // concrete class type, not an existential (any SoundGenerator).
+        let unmanagedGen = Unmanaged<AnyObject>.passUnretained(generator as AnyObject)
         guard let fmt = format else {
             assertionFailure("Audio format not initialized")
             return
         }
 
         let sourceNode = AVAudioSourceNode(format: fmt) { (isSilence, _, frameCount, outputData) -> OSStatus in
-            let gen = unmanagedGen.takeUnretainedValue()
+            let gen = unmanagedGen.takeUnretainedValue() as! any SoundGenerator
             let abl = UnsafeMutableAudioBufferListPointer(outputData)
             let frames = Int(frameCount)
 
@@ -358,9 +358,7 @@ final class AudioEngine: @unchecked Sendable {
         engine.connect(sourceNode, to: mixerNode, format: format)
         sourceNodes[id] = sourceNode
 
-        #if DEBUG
-        print("[Hush] Playing generated: \(config.type.rawValue)")
-        #endif
+        logger.info("Playing generated: \(config.type.rawValue)")
     }
 
     private func addSampleSource(id: UUID, config: SourceConfiguration) {
@@ -418,9 +416,7 @@ final class AudioEngine: @unchecked Sendable {
             }
         }
 
-        #if DEBUG
-        print("[Hush] Playing sample: \(asset.displayName) [\(asset.id)]")
-        #endif
+        logger.info("Playing sample: \(asset.displayName) [\(asset.id)]")
     }
 
     private func finishSampleSetup(id: UUID, config: SourceConfiguration, buffer: AVAudioPCMBuffer, asset: SoundAsset) {
@@ -444,9 +440,7 @@ final class AudioEngine: @unchecked Sendable {
             }
         }
 
-        #if DEBUG
-        print("[Hush] Playing sample (cached): \(asset.displayName) [\(asset.id)]")
-        #endif
+        logger.info("Playing sample (cached): \(asset.displayName) [\(asset.id)]")
     }
 
     private func addLegacySampleSource(id: UUID, config: SourceConfiguration, fileName: String) {
@@ -478,9 +472,7 @@ final class AudioEngine: @unchecked Sendable {
             }
         }
 
-        #if DEBUG
-        print("[Hush] Playing legacy sample: \(config.type.rawValue) (\(fileName))")
-        #endif
+        logger.info("Playing legacy sample: \(config.type.rawValue) (\(fileName))")
     }
 
     func removeSource(id: UUID) {
@@ -657,9 +649,7 @@ final class AudioEngine: @unchecked Sendable {
             fadeIn()
             updateNowPlaying()
         } catch {
-            #if DEBUG
-            print("[Hush] Engine start failed: \(error)")
-            #endif
+            logger.error("Engine start failed: \(error.localizedDescription)")
             onError?("Audio engine failed to start. Please try again.")
         }
     }
@@ -906,9 +896,7 @@ final class AudioEngine: @unchecked Sendable {
             } catch {
                 isPlaying = false
                 clearNowPlaying()
-                #if DEBUG
-                print("[Hush] Audio graph rebuild failed to restart playback: \(error)")
-                #endif
+                logger.error("Audio graph rebuild failed to restart playback: \(error.localizedDescription)")
             }
         } else {
             isPlaying = false

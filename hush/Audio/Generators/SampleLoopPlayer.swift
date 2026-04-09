@@ -1,5 +1,8 @@
 @preconcurrency import AVFoundation
 import Synchronization
+import os.log
+
+private let logger = Logger(subsystem: "net.hush.audio", category: "SampleLoopPlayer")
 
 // Loads bundled audio samples and pre-bakes a seamless crossfade loop buffer
 // at load time. Designed for use with AVAudioPlayerNode.scheduleBuffer(.loops) —
@@ -42,9 +45,7 @@ final class SampleLoopPlayer: @unchecked Sendable {
                 forResource: asset.fileName,
                 withExtension: asset.fileExtension
             ) else {
-                #if DEBUG
-                print("[Hush] Failed to find audio file: \(asset.subdirectory)/\(asset.fileName).\(asset.fileExtension)")
-                #endif
+                logger.error("Failed to find audio file: \(asset.subdirectory)/\(asset.fileName).\(asset.fileExtension)")
                 isLoaded = false
                 return
             }
@@ -149,14 +150,10 @@ final class SampleLoopPlayer: @unchecked Sendable {
                 let name = fileURL.lastPathComponent
                 let frames = loopBuffer?.frameLength ?? 0
                 let dur = Double(frames) / targetSampleRate
-                #if DEBUG
-                print("[Hush] Loaded sample: \(name) (\(String(format: "%.1f", dur))s, crossfade: \(Int(crossfadeDurationMs))ms)")
-                #endif
+                logger.info("Loaded sample: \(name) (\(String(format: "%.1f", dur))s, crossfade: \(Int(crossfadeDurationMs))ms)")
             }
         } catch {
-            #if DEBUG
-            print("[Hush] Failed to load sample from \(fileURL.lastPathComponent): \(error)")
-            #endif
+            logger.error("Failed to load sample from \(fileURL.lastPathComponent): \(error.localizedDescription)")
             isLoaded = false
         }
     }
