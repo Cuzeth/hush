@@ -2,7 +2,13 @@
   "permissions": {
     "allow": [
       "Bash(find:*)",
-      "Bash(git merge:*)"
+      "Bash(git merge:*)",
+      "Bash(gh label:*)",
+      "Bash(gh issue:*)",
+      "Bash(git add:*)",
+      "Bash(git commit -m ':*)",
+      "Bash(rm -f /Users/cuz/GitHub/hush/.git/index.lock)",
+      "Bash(git rm:*)"
     ]
   }
 }
