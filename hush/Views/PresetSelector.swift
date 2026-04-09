@@ -2,7 +2,7 @@ import SwiftUI
 import SwiftData
 
 func soundSourceSummary(_ sources: [SoundSource]) -> String {
-    let names = sources.map(\.type.rawValue)
+    let names = sources.map(\.displayName)
     if names.count <= 2 { return names.joined(separator: " + ") }
     return "\(names[0]) + \(names[1]) + \(names.count - 2) more"
 }

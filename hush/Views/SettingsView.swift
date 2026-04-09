@@ -9,6 +9,7 @@ struct SettingsView: View {
     @AppStorage("binauralCarrier") private var binauralCarrier: Double = 200
 
     @State private var headphonesConnected = AudioEngine.headphonesConnected
+    @State private var showCredits = false
 
     @Environment(\.dismiss) private var dismiss
 
@@ -95,7 +96,19 @@ struct SettingsView: View {
                             Text("GPL v3")
                                 .foregroundStyle(HushPalette.textSecondary)
                         }
-                        Text("Hush generates ADHD-friendly focus sounds using real-time DSP. No accounts, no analytics, no tracking.")
+                        Button {
+                            showCredits = true
+                        } label: {
+                            HStack {
+                                Text("Sound Credits & Acknowledgments")
+                                Spacer()
+                                Image(systemName: "chevron.right")
+                                    .font(.caption)
+                                    .foregroundStyle(HushPalette.textSecondary)
+                            }
+                        }
+                        .foregroundStyle(HushPalette.accentSoft)
+                        Text("Hush generates focus sounds using real-time DSP. No accounts, no analytics, no tracking.")
                             .font(.caption)
                             .foregroundStyle(HushPalette.textSecondary)
                         Text("Hush is a focus and relaxation aid, not a medical device, and it is not intended to diagnose or treat any condition.")
@@ -118,6 +131,9 @@ struct SettingsView: View {
                     Button("Done") { dismiss() }
                         .foregroundStyle(HushPalette.textPrimary)
                 }
+            }
+            .sheet(isPresented: $showCredits) {
+                CreditsView()
             }
         }
     }

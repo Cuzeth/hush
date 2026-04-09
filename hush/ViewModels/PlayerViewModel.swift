@@ -60,20 +60,32 @@ final class PlayerViewModel {
             currentPreset = preset
             activeSources = preset.sources
         }
-        applyCurrentSources()
+        // play() calls applyCurrentSources() internally — don't double-apply
         play()
     }
 
     func randomMix() {
         stop()
-        let toneTypes: Set<SoundType> = [.binauralBeats, .isochronicTones, .monauralBeats, .pureTone, .drone]
-        let allTypes = SoundType.allCases.filter { !toneTypes.contains($0) }
-        let count = Int.random(in: 2...3)
-        let selected = allTypes.shuffled().prefix(count)
+        let count = Int.random(in: 2...4)
+
+        // Mix of generated and sample assets
+        let generatedTypes: [SoundType] = [.whiteNoise, .pinkNoise, .brownNoise, .grayNoise]
+        let assets = SoundAssetRegistry.all
+
+        var sources: [SoundSource] = []
+        // Always include one noise generator
+        if let noise = generatedTypes.randomElement() {
+            sources.append(SoundSource(type: noise, volume: Float.random(in: 0.3...0.6)))
+        }
+        // Fill the rest with random assets
+        let remainingCount = count - sources.count
+        let selectedAssets = assets.shuffled().prefix(remainingCount)
+        for asset in selectedAssets {
+            sources.append(SoundSource(asset: asset, volume: Float.random(in: 0.3...0.7)))
+        }
+
         withAnimation(.easeInOut(duration: 0.35)) {
-            activeSources = selected.map { type in
-                SoundSource(type: type, volume: Float.random(in: 0.3...0.8))
-            }
+            activeSources = sources
             currentPreset = nil
         }
         applyCurrentSources()
@@ -114,10 +126,10 @@ final class PlayerViewModel {
 
     // MARK: - Source Management
 
-    func addSource(_ type: SoundType) {
+    func addSource(_ type: SoundType, assetID: String? = nil) {
         guard activeSources.count < AudioConstants.maxSimultaneousSources else { return }
 
-        var source = SoundSource(type: type, volume: 0.5)
+        var source = SoundSource(type: type, volume: 0.5, assetID: assetID)
         if type == .pureTone || type == .drone {
             source.toneFrequency = TonePreset.hz432.frequency
         }
@@ -134,7 +146,23 @@ final class PlayerViewModel {
             engine.addSource(id: source.id, type: source.type, volume: source.volume,
                            binauralRange: source.binauralRange,
                            binauralFrequency: source.binauralFrequency,
-                           toneFrequency: source.toneFrequency)
+                           toneFrequency: source.toneFrequency,
+                           assetID: source.assetID)
+        }
+    }
+
+    func addAsset(_ asset: SoundAsset) {
+        guard activeSources.count < AudioConstants.maxSimultaneousSources else { return }
+
+        let source = SoundSource(asset: asset, volume: 1.0)
+
+        withAnimation(.easeInOut(duration: 0.3)) {
+            activeSources.append(source)
+        }
+
+        if isPlaying {
+            engine.addSource(id: source.id, type: .sampleAsset, volume: source.volume,
+                           assetID: source.assetID)
         }
     }
 
@@ -194,7 +222,8 @@ final class PlayerViewModel {
             engine.addSource(id: source.id, type: source.type, volume: source.volume,
                            binauralRange: source.binauralRange,
                            binauralFrequency: source.binauralFrequency,
-                           toneFrequency: source.toneFrequency)
+                           toneFrequency: source.toneFrequency,
+                           assetID: source.assetID)
         }
     }
 

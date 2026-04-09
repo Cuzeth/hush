@@ -100,7 +100,7 @@ struct OnboardingView: View {
                                 Text(preset.name)
                                     .font(.headline)
                                     .foregroundStyle(HushPalette.textPrimary)
-                                Text(preset.sources.map(\.type.rawValue).joined(separator: " + "))
+                                Text(preset.sources.map(\.displayName).joined(separator: " + "))
                                     .font(.caption)
                                     .foregroundStyle(HushPalette.textSecondary)
                             }

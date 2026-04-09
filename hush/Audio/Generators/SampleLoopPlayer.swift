@@ -1,7 +1,7 @@
 @preconcurrency import AVFoundation
 import Synchronization
 
-// Loads bundled CC0 audio samples and pre-bakes a seamless crossfade loop buffer
+// Loads bundled audio samples and pre-bakes a seamless crossfade loop buffer
 // at load time. Designed for use with AVAudioPlayerNode.scheduleBuffer(.loops) —
 // no sample-level work happens in any real-time render callback.
 final class SampleLoopPlayer: @unchecked Sendable {
@@ -9,10 +9,15 @@ final class SampleLoopPlayer: @unchecked Sendable {
     nonisolated(unsafe) private(set) var loopBuffer: AVAudioPCMBuffer?
     nonisolated(unsafe) private(set) var isLoaded = false
 
+    /// The asset this player was loaded from (nil for legacy loads)
+    nonisolated(unsafe) private(set) var assetID: String?
+
     nonisolated var volume: Float {
         get { Float(bitPattern: _volume.load(ordering: .relaxed)) }
         set { _volume.store(newValue.bitPattern, ordering: .relaxed) }
     }
+
+    nonisolated init() {}
 
     nonisolated init(fileName: String? = nil, sampleRate: Double = 44100) {
         if let fileName {
@@ -20,7 +25,34 @@ final class SampleLoopPlayer: @unchecked Sendable {
         }
     }
 
-    // MARK: - Loading
+    // MARK: - Loading from SoundAsset
+
+    nonisolated func loadAsset(_ asset: SoundAsset, targetSampleRate: Double) {
+        assetID = asset.id
+
+        // Search for the file in the bundle subdirectory
+        guard let url = Bundle.main.url(
+            forResource: asset.fileName,
+            withExtension: asset.fileExtension,
+            subdirectory: asset.subdirectory
+        ) else {
+            // Fallback: search without subdirectory
+            guard let fallbackURL = Bundle.main.url(
+                forResource: asset.fileName,
+                withExtension: asset.fileExtension
+            ) else {
+                print("[Hush] Failed to find audio file: \(asset.subdirectory)/\(asset.fileName).\(asset.fileExtension)")
+                isLoaded = false
+                return
+            }
+            loadFromURL(fallbackURL, targetSampleRate: targetSampleRate, crossfadeDurationMs: asset.crossfadeDurationMs)
+            return
+        }
+
+        loadFromURL(url, targetSampleRate: targetSampleRate, crossfadeDurationMs: asset.crossfadeDurationMs)
+    }
+
+    // MARK: - Loading (legacy — by name)
 
     nonisolated func loadSample(named name: String, targetSampleRate: Double) {
         let extensions = ["m4a", "wav", "mp3", "aif", "aiff"]
@@ -41,6 +73,12 @@ final class SampleLoopPlayer: @unchecked Sendable {
             return
         }
 
+        loadFromURL(fileURL, targetSampleRate: targetSampleRate, crossfadeDurationMs: AudioConstants.crossfadeDurationMs)
+    }
+
+    // MARK: - Core Loading
+
+    private nonisolated func loadFromURL(_ fileURL: URL, targetSampleRate: Double, crossfadeDurationMs: Double) {
         do {
             let file = try AVAudioFile(forReading: fileURL)
 
@@ -61,12 +99,18 @@ final class SampleLoopPlayer: @unchecked Sendable {
             ) else { return }
             try file.read(into: sourceBuffer)
 
-            // Convert to target format if needed
+            // Convert to target format if needed (sample rate, channel count, or bit depth)
             let convertedBuffer: AVAudioPCMBuffer
-            if sourceFormat.sampleRate != targetSampleRate || sourceFormat.channelCount != 2 {
+            if sourceFormat.sampleRate != targetSampleRate ||
+               sourceFormat.channelCount != 2 ||
+               sourceFormat.commonFormat != .pcmFormatFloat32 {
                 guard let converter = AVAudioConverter(from: sourceFormat, to: targetFormat) else { return }
+
+                // Enable high-quality sample rate conversion
+                converter.sampleRateConverterQuality = .max
+
                 let ratio = targetSampleRate / sourceFormat.sampleRate
-                let outputFrameCount = AVAudioFrameCount(Double(sourceFrameCount) * ratio)
+                let outputFrameCount = AVAudioFrameCount(Double(sourceFrameCount) * ratio) + 1
                 guard let outputBuffer = AVAudioPCMBuffer(
                     pcmFormat: targetFormat,
                     frameCapacity: outputFrameCount
@@ -91,29 +135,27 @@ final class SampleLoopPlayer: @unchecked Sendable {
             }
 
             // Pre-bake the crossfade into the buffer
+            let crossfadeSamples = Int(targetSampleRate * (crossfadeDurationMs / 1000.0))
             loopBuffer = prebakeCrossfade(
                 from: convertedBuffer,
-                crossfadeSamples: Int(targetSampleRate * (AudioConstants.crossfadeDurationMs / 1000.0))
+                crossfadeSamples: crossfadeSamples
             )
             isLoaded = loopBuffer != nil
+
+            if isLoaded {
+                let name = fileURL.lastPathComponent
+                let frames = loopBuffer?.frameLength ?? 0
+                let dur = Double(frames) / targetSampleRate
+                print("[Hush] Loaded sample: \(name) (\(String(format: "%.1f", dur))s, crossfade: \(Int(crossfadeDurationMs))ms)")
+            }
         } catch {
+            print("[Hush] Failed to load sample from \(fileURL.lastPathComponent): \(error)")
             isLoaded = false
         }
     }
 
     // MARK: - Pre-baked Crossfade
 
-    // Creates a loop-ready buffer where the tail of the original audio is
-    // crossfaded into the head, so AVAudioPlayerNode.scheduleBuffer(.loops)
-    // produces a seamless transition at the loop point.
-    //
-    // Given N source frames and C crossfade frames, the output has (N - C) frames:
-    //   frames [0, C):          blend of original head (fading in) + original tail (fading out)
-    //   frames [C, N - C):      verbatim original audio
-    //
-    // When the player loops from frame (N-C-1) back to frame 0, the crossfade
-    // region ensures continuity: frame 0 starts with the tail content fully present,
-    // smoothly transitioning into the head content.
     private nonisolated func prebakeCrossfade(
         from source: AVAudioPCMBuffer,
         crossfadeSamples C: Int

@@ -8,6 +8,11 @@ extension SoundSource {
         case .pureTone, .drone:
             if let freq = toneFrequency { return "\(Int(freq)) Hz" }
             return "432 Hz"
+        case .sampleAsset:
+            if let asset = resolvedAsset {
+                return asset.category.rawValue
+            }
+            return "Looped ambience"
         default:
             return type.isGenerated ? "Realtime generator" : "Looped ambience"
         }
@@ -72,6 +77,8 @@ struct MixerView: View {
         .sheet(isPresented: $showAddSound) {
             SoundPickerGrid(activeSources: viewModel.activeSources) { type in
                 viewModel.addSource(type)
+            } onSelectAsset: { asset in
+                viewModel.addAsset(asset)
             }
             .presentationDetents([.medium, .large])
             .presentationDragIndicator(.visible)
@@ -98,13 +105,13 @@ private struct SourceRow: View {
                         .fill(HushPalette.surfaceRaised.opacity(0.92))
                         .frame(width: 42, height: 42)
 
-                    Image(systemName: source.type.icon)
+                    Image(systemName: source.displayIcon)
                         .font(.headline)
                         .foregroundStyle(HushPalette.textPrimary)
                 }
 
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(source.type.rawValue)
+                    Text(source.displayName)
                         .font(.headline)
                         .foregroundStyle(HushPalette.textPrimary)
 
@@ -127,7 +134,7 @@ private struct SourceRow: View {
                         .font(.caption.weight(.bold))
                 }
                 .buttonStyle(HushCircleButtonStyle())
-                .accessibilityLabel("Remove \(source.type.rawValue)")
+                .accessibilityLabel("Remove \(source.displayName)")
             }
 
             Slider(value: $volume, in: 0...1)
@@ -135,7 +142,7 @@ private struct SourceRow: View {
             .onChange(of: volume) {
                 viewModel.updateVolume(for: source, volume: volume)
             }
-            .accessibilityLabel("\(source.type.rawValue) volume")
+            .accessibilityLabel("\(source.displayName) volume")
             .accessibilityValue("\(Int(volume * 100)) percent")
 
             if isToneType {
@@ -162,17 +169,33 @@ private struct SourceRow: View {
 struct SoundPickerGrid: View {
     let activeSources: [SoundSource]
     let onSelect: (SoundType) -> Void
+    let onSelectAsset: (SoundAsset) -> Void
 
     @Environment(\.dismiss) private var dismiss
+    @State private var expandedCategories: Set<SoundCategory> = []
 
     private let columns = [
         GridItem(.flexible(), spacing: 14),
         GridItem(.flexible(), spacing: 14)
     ]
 
-    private var available: [SoundType] {
-        let activeTypes = Set(activeSources.map(\.type))
-        return SoundType.allCases.filter { !activeTypes.contains($0) }
+    private var activeAssetIDs: Set<String> {
+        Set(activeSources.compactMap(\.assetID))
+    }
+
+    private var activeGeneratedTypes: Set<SoundType> {
+        Set(activeSources.map(\.type).filter(\.isGenerated))
+    }
+
+    private var availableGenerated: [SoundType] {
+        SoundType.allCases.filter { $0.isGenerated && $0 != .sampleAsset && !activeGeneratedTypes.contains($0) }
+    }
+
+    /// Categories that have at least one non-active asset
+    private var categoriesWithAssets: [SoundCategory] {
+        SoundCategory.allCases.filter { cat in
+            SoundAssetRegistry.assets(for: cat).contains { !activeAssetIDs.contains($0.id) }
+        }
     }
 
     var body: some View {
@@ -182,17 +205,17 @@ struct SoundPickerGrid: View {
 
                 ScrollView(showsIndicators: false) {
                     VStack(alignment: .leading, spacing: 24) {
+                        // Generated section
                         soundSection(
                             title: "Generated",
                             subtitle: "Realtime DSP layers",
-                            sounds: available.filter(\.isGenerated)
+                            sounds: availableGenerated
                         )
 
-                        soundSection(
-                            title: "Nature",
-                            subtitle: "Looped ambient recordings",
-                            sounds: available.filter { !$0.isGenerated }
-                        )
+                        // Sample categories
+                        ForEach(categoriesWithAssets) { category in
+                            categorySection(category)
+                        }
                     }
                     .padding(.horizontal, 20)
                     .padding(.top, 16)
@@ -209,6 +232,85 @@ struct SoundPickerGrid: View {
             }
         }
         .tint(HushPalette.accentSoft)
+    }
+
+    @ViewBuilder
+    private func categorySection(_ category: SoundCategory) -> some View {
+        let assets = SoundAssetRegistry.assets(for: category).filter { !activeAssetIDs.contains($0.id) }
+        let isExpanded = expandedCategories.contains(category)
+
+        VStack(alignment: .leading, spacing: 14) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.25)) {
+                    if isExpanded {
+                        expandedCategories.remove(category)
+                    } else {
+                        expandedCategories.insert(category)
+                    }
+                }
+            } label: {
+                HStack(spacing: 10) {
+                    Image(systemName: category.icon)
+                        .font(.title3)
+                        .foregroundStyle(HushPalette.accentSoft)
+                        .frame(width: 28)
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(category.rawValue)
+                            .font(.system(size: 20, weight: .semibold, design: .serif))
+                            .foregroundStyle(HushPalette.textPrimary)
+
+                        Text("\(assets.count) sound\(assets.count == 1 ? "" : "s")")
+                            .font(.caption)
+                            .foregroundStyle(HushPalette.textSecondary)
+                    }
+
+                    Spacer()
+
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(HushPalette.textSecondary)
+                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                }
+            }
+            .buttonStyle(.plain)
+
+            if isExpanded {
+                LazyVGrid(columns: columns, spacing: 14) {
+                    ForEach(assets) { asset in
+                        Button {
+                            onSelectAsset(asset)
+                            dismiss()
+                        } label: {
+                            VStack(alignment: .leading, spacing: 14) {
+                                ZStack {
+                                    Circle()
+                                        .fill(HushPalette.surfaceRaised.opacity(0.92))
+                                        .frame(width: 42, height: 42)
+
+                                    Image(systemName: asset.icon)
+                                        .font(.headline)
+                                        .foregroundStyle(HushPalette.textPrimary)
+                                }
+
+                                Text(asset.displayName)
+                                    .font(.headline)
+                                    .foregroundStyle(HushPalette.textPrimary)
+                                    .multilineTextAlignment(.leading)
+
+                                Text("Recorded")
+                                    .font(.caption)
+                                    .foregroundStyle(HushPalette.textSecondary)
+                            }
+                            .frame(maxWidth: .infinity, minHeight: 142, alignment: .leading)
+                            .padding(16)
+                            .hushPanel(radius: 26, fill: HushPalette.surface.opacity(0.94))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+        }
     }
 
     @ViewBuilder
@@ -246,7 +348,7 @@ struct SoundPickerGrid: View {
                                 .foregroundStyle(HushPalette.textPrimary)
                                 .multilineTextAlignment(.leading)
 
-                            Text(type.isGenerated ? "Synthetic" : "Recorded")
+                            Text("Synthetic")
                                 .font(.caption)
                                 .foregroundStyle(HushPalette.textSecondary)
                         }

@@ -39,7 +39,7 @@ enum BinauralRange: String, CaseIterable, Identifiable, Codable {
     nonisolated var description: String {
         switch self {
         case .alpha: return "Calm Focus (8-13 Hz)"
-        case .smr: return "ADHD Sweet Spot (12-15 Hz)"
+        case .smr: return "Sweet Spot (12-15 Hz)"
         case .beta: return "Alertness (13-30 Hz)"
         case .gamma: return "Peak Cognition (38-42 Hz)"
         }
@@ -56,6 +56,7 @@ enum SoundType: String, Codable, CaseIterable, Identifiable {
     case monauralBeats = "Monaural Beats"
     case pureTone = "Pure Tone"
     case drone = "Drone"
+    // Legacy sample types (kept for backward compat with saved presets)
     case rain = "Rain"
     case ocean = "Ocean"
     case thunder = "Thunder"
@@ -63,6 +64,8 @@ enum SoundType: String, Codable, CaseIterable, Identifiable {
     case birdsong = "Birdsong"
     case wind = "Wind"
     case stream = "Stream"
+    // New: references a SoundAsset by its ID (stored in SoundSource.assetID)
+    case sampleAsset = "Sample Asset"
 
     nonisolated var id: String { rawValue }
 
@@ -84,6 +87,7 @@ enum SoundType: String, Codable, CaseIterable, Identifiable {
         case .birdsong: return "bird"
         case .wind: return "wind"
         case .stream: return "drop.triangle"
+        case .sampleAsset: return "music.note"
         }
     }
 
@@ -92,6 +96,16 @@ enum SoundType: String, Codable, CaseIterable, Identifiable {
         case .whiteNoise, .pinkNoise, .brownNoise, .grayNoise,
              .binauralBeats, .isochronicTones, .monauralBeats,
              .pureTone, .drone:
+            return true
+        default:
+            return false
+        }
+    }
+
+    /// Whether this is a legacy sample type (the original 7 bundled sounds)
+    nonisolated var isLegacySample: Bool {
+        switch self {
+        case .rain, .ocean, .thunder, .fire, .birdsong, .wind, .stream:
             return true
         default:
             return false
@@ -107,6 +121,21 @@ enum SoundType: String, Codable, CaseIterable, Identifiable {
         case .birdsong: return "birdsong"
         case .wind: return "wind"
         case .stream: return "stream"
+        default: return nil
+        }
+    }
+
+    /// The default asset ID to use when a legacy sample type is played.
+    /// Maps each legacy type to the best matching asset in the registry.
+    nonisolated var defaultAssetID: String? {
+        switch self {
+        case .rain: return "sample.rain.calming"
+        case .ocean: return "moodist.nature.waves"
+        case .thunder: return "sample.storm.thunder"
+        case .fire: return "sample.fire.crackling"
+        case .birdsong: return "sample.birds.morning"
+        case .wind: return "moodist.nature.wind"
+        case .stream: return "moodist.nature.river"
         default: return nil
         }
     }

@@ -83,6 +83,11 @@ struct EditPresetSheet: View {
                 withAnimation(.easeInOut(duration: 0.3)) {
                     sources.append(source)
                 }
+            } onSelectAsset: { asset in
+                let source = SoundSource(asset: asset, volume: 0.5)
+                withAnimation(.easeInOut(duration: 0.3)) {
+                    sources.append(source)
+                }
             }
             .presentationDetents([.medium, .large])
             .presentationDragIndicator(.visible)
@@ -110,13 +115,13 @@ private struct EditSourceRow: View {
                     Circle()
                         .fill(HushPalette.surfaceRaised.opacity(0.92))
                         .frame(width: 42, height: 42)
-                    Image(systemName: source.type.icon)
+                    Image(systemName: source.displayIcon)
                         .font(.headline)
                         .foregroundStyle(HushPalette.textPrimary)
                 }
 
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(source.type.rawValue)
+                    Text(source.displayName)
                         .font(.headline)
                         .foregroundStyle(HushPalette.textPrimary)
                     Text(source.subtitle)

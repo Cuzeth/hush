@@ -165,9 +165,9 @@ struct PlayerView: View {
                     HStack(spacing: 8) {
                         ForEach(viewModel.activeSources.prefix(6)) { source in
                             HStack(spacing: 6) {
-                                Image(systemName: source.type.icon)
+                                Image(systemName: source.displayIcon)
                                     .font(.caption2.weight(.bold))
-                                Text(source.type.rawValue)
+                                Text(source.displayName)
                                     .font(.caption2.weight(.medium))
                             }
                             .foregroundStyle(HushPalette.textPrimary)
@@ -326,6 +326,8 @@ struct PlayerView: View {
             return [Color(red: 0.31, green: 0.25, blue: 0.44), Color(red: 0.16, green: 0.12, blue: 0.23)]
         case .whiteNoise, .pinkNoise, .brownNoise, .grayNoise:
             return [Color(red: 0.33, green: 0.32, blue: 0.28), Color(red: 0.16, green: 0.15, blue: 0.13)]
+        case .sampleAsset:
+            return [Color(red: 0.25, green: 0.30, blue: 0.35), Color(red: 0.13, green: 0.15, blue: 0.18)]
         case .none:
             return [HushPalette.accentGlow, HushPalette.surfaceRaised]
         }

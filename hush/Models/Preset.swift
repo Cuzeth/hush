@@ -65,7 +65,48 @@ struct Preset: Identifiable, Codable {
                 SoundSource(type: .brownNoise, volume: 0.5)
             ],
             isBuiltIn: true
-        )
+        ),
+        // New presets using expanded sound library
+        Preset(
+            name: "Coffee Shop",
+            icon: "cup.and.saucer.fill",
+            sources: [
+                SoundSource(asset: SoundAssetRegistry.asset(withID: "moodist.places.cafe")!, volume: 1.0),
+                SoundSource(asset: SoundAssetRegistry.asset(withID: "moodist.things.keyboard")!, volume: 0.8),
+                SoundSource(asset: SoundAssetRegistry.asset(withID: "moodist.rain.light")!, volume: 0.85),
+            ],
+            isBuiltIn: true
+        ),
+        Preset(
+            name: "Rainy Day",
+            icon: "cloud.rain.fill",
+            sources: [
+                SoundSource(asset: SoundAssetRegistry.asset(withID: "moodist.rain.light")!, volume: 1.0),
+                SoundSource(asset: SoundAssetRegistry.asset(withID: "moodist.rain.thunder")!, volume: 0.75),
+                SoundSource(asset: SoundAssetRegistry.asset(withID: "moodist.nature.wind")!, volume: 0.7),
+            ],
+            isBuiltIn: true
+        ),
+        Preset(
+            name: "Forest",
+            icon: "tree.fill",
+            sources: [
+                SoundSource(asset: SoundAssetRegistry.asset(withID: "sample.birds.morning")!, volume: 1.0),
+                SoundSource(asset: SoundAssetRegistry.asset(withID: "moodist.nature.river")!, volume: 0.85),
+                SoundSource(asset: SoundAssetRegistry.asset(withID: "moodist.nature.wind-trees")!, volume: 0.75),
+            ],
+            isBuiltIn: true
+        ),
+        Preset(
+            name: "Cozy",
+            icon: "fireplace.fill",
+            sources: [
+                SoundSource(asset: SoundAssetRegistry.asset(withID: "sample.fire.crackling")!, volume: 1.0),
+                SoundSource(asset: SoundAssetRegistry.asset(withID: "moodist.rain.window")!, volume: 0.85),
+                SoundSource(asset: SoundAssetRegistry.asset(withID: "moodist.things.clock")!, volume: 0.6),
+            ],
+            isBuiltIn: true
+        ),
     ]
 }
 

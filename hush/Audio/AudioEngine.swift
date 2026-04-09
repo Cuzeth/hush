@@ -14,6 +14,7 @@ final class AudioEngine: @unchecked Sendable {
         var binauralRange: BinauralRange?
         var binauralFrequency: Float?
         var toneFrequency: Float?
+        var assetID: String?
     }
 
     private static let fadeDurationKey = "fadeDuration"
@@ -31,11 +32,17 @@ final class AudioEngine: @unchecked Sendable {
     private var samplePlayers: [UUID: SampleLoopPlayer] = [:]
     private var sourceConfigurations: [UUID: SourceConfiguration] = [:]
 
+    // Lazy-load buffer cache: keyed by asset ID, evicted at 200MB
+    private let bufferCache = NSCache<NSString, AVAudioPCMBuffer>()
+
     // Fade state — applied via mixerNode.outputVolume (never in render callbacks)
     private var fadeTarget: Float = 1.0
     private var fadeStep: Float = 0
     private var isFading = false
     private var fadeCompletion: (() -> Void)?
+
+    // Per-source fade timers
+    private var sourceFadeTimers: [UUID: Timer] = [:]
 
     // Actual hardware sample rate, queried from engine output node at setup
     private(set) var actualSampleRate: Double = 44100
@@ -48,6 +55,9 @@ final class AudioEngine: @unchecked Sendable {
     private var isRebuildingGraph = false
     private var shouldResumeAfterInterruption = false
     private var remoteCommandsConfigured = false
+
+    // Background loading queue
+    private let loadingQueue = DispatchQueue(label: "net.hush.audio.loading", qos: .userInitiated)
 
     // Notification observers
     private var interruptionObserver: Any?
@@ -65,6 +75,10 @@ final class AudioEngine: @unchecked Sendable {
     var currentPresetName: String = "Hush"
 
     private init() {
+        // 200MB cache limit
+        bufferCache.totalCostLimit = 200 * 1024 * 1024
+        bufferCache.name = "net.hush.audio.bufferCache"
+
         configureAudioSession()
         configureEngineGraph()
         setupSessionObservers()
@@ -86,7 +100,7 @@ final class AudioEngine: @unchecked Sendable {
             )
             sessionCategoryConfigured = true
         } catch {
-            print("Audio session configuration failed: \(error)")
+            print("[Hush] Audio session configuration failed: \(error)")
         }
     }
 
@@ -95,7 +109,7 @@ final class AudioEngine: @unchecked Sendable {
         do {
             try AVAudioSession.sharedInstance().setActive(true)
         } catch {
-            print("Audio session activation failed: \(error)")
+            print("[Hush] Audio session activation failed: \(error)")
         }
     }
 
@@ -143,7 +157,6 @@ final class AudioEngine: @unchecked Sendable {
     private func setupSessionObservers() {
         let session = AVAudioSession.sharedInstance()
 
-        // Interruption handling (phone calls, Siri, other apps taking audio)
         interruptionObserver = NotificationCenter.default.addObserver(
             forName: AVAudioSession.interruptionNotification,
             object: session,
@@ -152,7 +165,6 @@ final class AudioEngine: @unchecked Sendable {
             self?.handleInterruption(notification)
         }
 
-        // Route change handling (headphones unplugged, Bluetooth disconnect)
         routeChangeObserver = NotificationCenter.default.addObserver(
             forName: AVAudioSession.routeChangeNotification,
             object: session,
@@ -263,13 +275,15 @@ final class AudioEngine: @unchecked Sendable {
     func addSource(id: UUID, type: SoundType, volume: Float,
                    binauralRange: BinauralRange? = nil,
                    binauralFrequency: Float? = nil,
-                   toneFrequency: Float? = nil) {
+                   toneFrequency: Float? = nil,
+                   assetID: String? = nil) {
         let config = SourceConfiguration(
             type: type,
             volume: volume,
             binauralRange: binauralRange,
             binauralFrequency: binauralFrequency,
-            toneFrequency: toneFrequency
+            toneFrequency: toneFrequency,
+            assetID: assetID
         )
 
         sourceConfigurations[id] = config
@@ -302,7 +316,6 @@ final class AudioEngine: @unchecked Sendable {
             let abl = UnsafeMutableAudioBufferListPointer(outputData)
             let frames = Int(frameCount)
 
-            // Non-interleaved stereo: abl has 2 buffers (one per channel).
             guard abl.count >= 2,
                   let ch0 = abl[0].mData?.assumingMemoryBound(to: Float.self),
                   let ch1 = abl[1].mData?.assumingMemoryBound(to: Float.self) else {
@@ -314,9 +327,6 @@ final class AudioEngine: @unchecked Sendable {
                 return noErr
             }
 
-            // generateStereo writes left/right independently.
-            // For most generators the default copies mono to both channels.
-            // BinauralBeatGenerator overrides to produce different L/R content.
             gen.generateStereo(left: ch0, right: ch1, frameCount: frames)
             return noErr
         }
@@ -324,22 +334,105 @@ final class AudioEngine: @unchecked Sendable {
         engine.attach(sourceNode)
         engine.connect(sourceNode, to: mixerNode, format: format)
         sourceNodes[id] = sourceNode
+
+        print("[Hush] Playing generated: \(config.type.rawValue)")
     }
 
     private func addSampleSource(id: UUID, config: SourceConfiguration) {
+        // Resolve the asset
+        let resolvedAssetID = config.assetID ?? config.type.defaultAssetID
+        guard let assetID = resolvedAssetID,
+              let asset = SoundAssetRegistry.asset(withID: assetID) else {
+            // Legacy fallback: try loading by sample file name
+            if let fileName = config.type.sampleFileName {
+                addLegacySampleSource(id: id, config: config, fileName: fileName)
+            }
+            return
+        }
+
+        // Check buffer cache first
+        let cacheKey = assetID as NSString
+        if let cachedBuffer = bufferCache.object(forKey: cacheKey) {
+            finishSampleSetup(id: id, config: config, buffer: cachedBuffer, asset: asset)
+            return
+        }
+
+        // Lazy-load on background queue
+        let sr = actualSampleRate
+        let wasAlreadyPlaying = isPlaying
+        let playerNode = AVAudioPlayerNode()
+        engine.attach(playerNode)
+        engine.connect(playerNode, to: mixerNode, format: format)
+        // Only start at 0 if we need to fade in (adding to a running engine)
+        playerNode.volume = wasAlreadyPlaying ? 0 : config.volume
+        playerNodes[id] = playerNode
+
+        loadingQueue.async { [weak self] in
+            let player = SampleLoopPlayer()
+            player.loadAsset(asset, targetSampleRate: sr)
+            player.volume = config.volume
+
+            DispatchQueue.main.async { [weak self] in
+                guard let self, let currentNode = self.playerNodes[id] else { return }
+                self.samplePlayers[id] = player
+
+                if let buffer = player.loopBuffer {
+                    // Cache the buffer (cost = byte size)
+                    let cost = Int(buffer.frameLength) * Int(buffer.format.channelCount) * 4
+                    self.bufferCache.setObject(buffer, forKey: cacheKey, cost: cost)
+
+                    currentNode.scheduleBuffer(buffer, at: nil, options: .loops)
+                    if self.isPlaying {
+                        currentNode.play()
+                        // Only per-source fade if added to a running engine
+                        if wasAlreadyPlaying {
+                            self.fadeInSource(id: id, targetVolume: config.volume)
+                        }
+                    }
+                }
+            }
+        }
+
+        print("[Hush] Playing sample: \(asset.displayName) [\(asset.id)]")
+    }
+
+    private func finishSampleSetup(id: UUID, config: SourceConfiguration, buffer: AVAudioPCMBuffer, asset: SoundAsset) {
+        let player = SampleLoopPlayer()
+        player.volume = config.volume
+        samplePlayers[id] = player
+
+        let wasAlreadyPlaying = isPlaying
+        let playerNode = AVAudioPlayerNode()
+        engine.attach(playerNode)
+        engine.connect(playerNode, to: mixerNode, format: format)
+        playerNode.volume = wasAlreadyPlaying ? 0 : config.volume
+
+        playerNode.scheduleBuffer(buffer, at: nil, options: .loops)
+        playerNodes[id] = playerNode
+
+        if isPlaying {
+            playerNode.play()
+            if wasAlreadyPlaying {
+                fadeInSource(id: id, targetVolume: config.volume)
+            }
+        }
+
+        print("[Hush] Playing sample (cached): \(asset.displayName) [\(asset.id)]")
+    }
+
+    private func addLegacySampleSource(id: UUID, config: SourceConfiguration, fileName: String) {
         let player = SampleLoopPlayer(
-            fileName: config.type.sampleFileName,
+            fileName: fileName,
             sampleRate: actualSampleRate
         )
         player.volume = config.volume
         samplePlayers[id] = player
 
+        let wasAlreadyPlaying = isPlaying
         let playerNode = AVAudioPlayerNode()
         engine.attach(playerNode)
-
-        // Connect with the engine format. AVAudioPlayerNode handles format conversion.
         engine.connect(playerNode, to: mixerNode, format: format)
-        playerNode.volume = config.volume
+        playerNode.volume = wasAlreadyPlaying ? 0 : config.volume
 
         if let buffer = player.loopBuffer {
             playerNode.scheduleBuffer(buffer, at: nil, options: .loops)
@@ -347,18 +440,33 @@ final class AudioEngine: @unchecked Sendable {
 
         playerNodes[id] = playerNode
 
-        // If the engine is already running, start playback immediately
         if isPlaying {
             playerNode.play()
+            if wasAlreadyPlaying {
+                fadeInSource(id: id, targetVolume: config.volume)
+            }
         }
+
+        print("[Hush] Playing legacy sample: \(config.type.rawValue) (\(fileName))")
     }
 
     func removeSource(id: UUID) {
         sourceConfigurations.removeValue(forKey: id)
-        removeAttachedSource(id: id)
+
+        // Fade out then remove
+        if playerNodes[id] != nil {
+            fadeOutSource(id: id) { [weak self] in
+                self?.removeAttachedSource(id: id)
+            }
+        } else {
+            removeAttachedSource(id: id)
+        }
     }
 
     private func removeAttachedSource(id: UUID) {
+        sourceFadeTimers[id]?.invalidate()
+        sourceFadeTimers.removeValue(forKey: id)
+
         // Generated source
         if let node = sourceNodes.removeValue(forKey: id) {
             engine.disconnectNodeOutput(node)
@@ -440,10 +548,59 @@ final class AudioEngine: @unchecked Sendable {
         }
     }
 
+    // MARK: - Per-Source Fade In/Out
+
+    private func fadeInSource(id: UUID, targetVolume: Float, duration: TimeInterval = 0.5) {
+        guard let node = playerNodes[id] else { return }
+        sourceFadeTimers[id]?.invalidate()
+
+        node.volume = 0
+        let steps = max(Int(duration * 60), 1)
+        let step = targetVolume / Float(steps)
+        var current: Float = 0
+
+        let timer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60.0, repeats: true) { [weak self] timer in
+            current += step
+            if current >= targetVolume {
+                node.volume = targetVolume
+                timer.invalidate()
+                self?.sourceFadeTimers.removeValue(forKey: id)
+            } else {
+                node.volume = current
+            }
+        }
+        sourceFadeTimers[id] = timer
+    }
+
+    private func fadeOutSource(id: UUID, duration: TimeInterval = 0.5, completion: @escaping () -> Void) {
+        guard let node = playerNodes[id] else {
+            completion()
+            return
+        }
+        sourceFadeTimers[id]?.invalidate()
+
+        let startVolume = node.volume
+        let steps = max(Int(duration * 60), 1)
+        let step = startVolume / Float(steps)
+        var current = startVolume
+
+        let timer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60.0, repeats: true) { [weak self] timer in
+            current -= step
+            if current <= 0 {
+                node.volume = 0
+                timer.invalidate()
+                self?.sourceFadeTimers.removeValue(forKey: id)
+                completion()
+            } else {
+                node.volume = current
+            }
+        }
+        sourceFadeTimers[id] = timer
+    }
+
     // MARK: - Playback Control
 
     func start() {
-        // Cancel any in-progress fade-out so we don't get stopped mid-restart
         if isFading {
             isFading = false
             fadeCompletion = nil
@@ -460,7 +617,7 @@ final class AudioEngine: @unchecked Sendable {
             fadeIn()
             updateNowPlaying()
         } catch {
-            print("Engine start failed: \(error)")
+            print("[Hush] Engine start failed: \(error)")
         }
     }
 
@@ -484,10 +641,13 @@ final class AudioEngine: @unchecked Sendable {
 
     private func startAllPlayerNodes() {
         for (id, node) in playerNodes {
-            // Re-schedule buffer if needed (after engine restart)
             if let buffer = samplePlayers[id]?.loopBuffer {
                 node.stop()
                 node.scheduleBuffer(buffer, at: nil, options: .loops)
+            } else if let assetID = sourceConfigurations[id]?.assetID ?? sourceConfigurations[id]?.type.defaultAssetID,
+                      let cached = bufferCache.object(forKey: assetID as NSString) {
+                node.stop()
+                node.scheduleBuffer(cached, at: nil, options: .loops)
             }
             node.play()
         }
@@ -509,7 +669,7 @@ final class AudioEngine: @unchecked Sendable {
         let duration = duration ?? configuredFadeDuration
         mixerNode.outputVolume = 0
         fadeTarget = 1.0
-        let steps = Int(duration * 60) // 60 fps timer ticks
+        let steps = Int(duration * 60)
         fadeStep = 1.0 / Float(max(steps, 1))
         isFading = true
         fadeCompletion = nil
@@ -549,7 +709,6 @@ final class AudioEngine: @unchecked Sendable {
         }
     }
 
-    // Apply timer fade multiplier (called from PlayerViewModel timer tick)
     func applyTimerFade(_ multiplier: Float) {
         mixerNode.outputVolume = max(0, min(1, multiplier))
     }
@@ -646,7 +805,7 @@ final class AudioEngine: @unchecked Sendable {
     private func updateNowPlaying() {
         var info = [String: Any]()
         info[MPMediaItemPropertyTitle] = currentPresetName
-        info[MPMediaItemPropertyArtist] = "Hush — Focus Sounds"
+        info[MPMediaItemPropertyArtist] = "Hush \u{2014} Focus Sounds"
         info[MPNowPlayingInfoPropertyIsLiveStream] = true
         info[MPNowPlayingInfoPropertyPlaybackRate] = 1.0
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
@@ -666,6 +825,10 @@ final class AudioEngine: @unchecked Sendable {
         let targetVolume = mixerNode.outputVolume
 
         isFading = false
+        // Invalidate all per-source fade timers
+        for (_, timer) in sourceFadeTimers { timer.invalidate() }
+        sourceFadeTimers.removeAll()
+
         pauseAllPlayerNodes()
         engine.stop()
 
@@ -695,7 +858,7 @@ final class AudioEngine: @unchecked Sendable {
             } catch {
                 isPlaying = false
                 clearNowPlaying()
-                print("Audio graph rebuild failed to restart playback: \(error)")
+                print("[Hush] Audio graph rebuild failed to restart playback: \(error)")
             }
         } else {
             isPlaying = false
