@@ -861,7 +861,7 @@ final class AudioEngine: @unchecked Sendable {
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
     }
 
-    // MARK: - Headphone Detection
+    // MARK: - Audio Graph Rebuild & Headphone Detection
 
     private func rebuildAudioGraph(shouldResumePlayback: Bool) {
         guard !isRebuildingGraph else { return }
@@ -878,6 +878,8 @@ final class AudioEngine: @unchecked Sendable {
         pauseAllPlayerNodes()
         engine.stop()
 
+        // Safe to clear without detaching: resetEngineGraph() below creates a
+        // brand-new AVAudioEngine, so old nodes are deallocated with the old engine.
         sourceNodes.removeAll()
         generators.removeAll()
         playerNodes.removeAll()
