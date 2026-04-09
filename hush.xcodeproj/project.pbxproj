@@ -14,19 +14,11 @@
 			remoteGlobalIDString = E4D787292F86458500B40561;
 			remoteInfo = hush;
 		};
-		E4D787442F86458600B40561 /* PBXContainerItemProxy */ = {
-			isa = PBXContainerItemProxy;
-			containerPortal = E4D787222F86458500B40561 /* Project object */;
-			proxyType = 1;
-			remoteGlobalIDString = E4D787292F86458500B40561;
-			remoteInfo = hush;
-		};
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
 		E4D7872A2F86458500B40561 /* hush.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = hush.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		E4D787392F86458600B40561 /* hushTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = hushTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
-		E4D787432F86458600B40561 /* hushUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = hushUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -75,13 +67,6 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		E4D787402F86458600B40561 /* Frameworks */ = {
-			isa = PBXFrameworksBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -100,7 +85,6 @@
 			children = (
 				E4D7872A2F86458500B40561 /* hush.app */,
 				E4D787392F86458600B40561 /* hushTests.xctest */,
-				E4D787432F86458600B40561 /* hushUITests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -153,29 +137,6 @@
 			productReference = E4D787392F86458600B40561 /* hushTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
 		};
-		E4D787422F86458600B40561 /* hushUITests */ = {
-			isa = PBXNativeTarget;
-			buildConfigurationList = E4D787532F86458600B40561 /* Build configuration list for PBXNativeTarget "hushUITests" */;
-			buildPhases = (
-				E4D7873F2F86458600B40561 /* Sources */,
-				E4D787402F86458600B40561 /* Frameworks */,
-				E4D787412F86458600B40561 /* Resources */,
-			);
-			buildRules = (
-			);
-			dependencies = (
-				E4D787452F86458600B40561 /* PBXTargetDependency */,
-			);
-			fileSystemSynchronizedGroups = (
-				E4D787462F86458600B40561 /* hushUITests */,
-			);
-			name = hushUITests;
-			packageProductDependencies = (
-			);
-			productName = hushUITests;
-			productReference = E4D787432F86458600B40561 /* hushUITests.xctest */;
-			productType = "com.apple.product-type.bundle.ui-testing";
-		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -190,10 +151,6 @@
 						CreatedOnToolsVersion = 26.4;
 					};
 					E4D787382F86458600B40561 = {
-						CreatedOnToolsVersion = 26.4;
-						TestTargetID = E4D787292F86458500B40561;
-					};
-					E4D787422F86458600B40561 = {
 						CreatedOnToolsVersion = 26.4;
 						TestTargetID = E4D787292F86458500B40561;
 					};
@@ -215,7 +172,6 @@
 			targets = (
 				E4D787292F86458500B40561 /* hush */,
 				E4D787382F86458600B40561 /* hushTests */,
-				E4D787422F86458600B40561 /* hushUITests */,
 			);
 		};
 /* End PBXProject section */
@@ -229,13 +185,6 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		E4D787372F86458600B40561 /* Resources */ = {
-			isa = PBXResourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-		E4D787412F86458600B40561 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -259,13 +208,6 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		E4D7873F2F86458600B40561 /* Sources */ = {
-			isa = PBXSourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -273,11 +215,6 @@
 			isa = PBXTargetDependency;
 			target = E4D787292F86458500B40561 /* hush */;
 			targetProxy = E4D7873A2F86458600B40561 /* PBXContainerItemProxy */;
-		};
-		E4D787452F86458600B40561 /* PBXTargetDependency */ = {
-			isa = PBXTargetDependency;
-			target = E4D787292F86458500B40561 /* hush */;
-			targetProxy = E4D787442F86458600B40561 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -523,46 +460,6 @@
 			};
 			name = Release;
 		};
-		E4D787542F86458600B40561 /* Debug */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = 38U4X64GHV;
-				GENERATE_INFOPLIST_FILE = YES;
-				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = dev.abdeen.hushUITests;
-				PRODUCT_NAME = "$(TARGET_NAME)";
-				STRING_CATALOG_GENERATE_SYMBOLS = NO;
-				SWIFT_APPROACHABLE_CONCURRENCY = YES;
-				SWIFT_EMIT_LOC_STRINGS = NO;
-				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
-				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2";
-				TEST_TARGET_NAME = hush;
-			};
-			name = Debug;
-		};
-		E4D787552F86458600B40561 /* Release */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = 38U4X64GHV;
-				GENERATE_INFOPLIST_FILE = YES;
-				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = dev.abdeen.hushUITests;
-				PRODUCT_NAME = "$(TARGET_NAME)";
-				STRING_CATALOG_GENERATE_SYMBOLS = NO;
-				SWIFT_APPROACHABLE_CONCURRENCY = YES;
-				SWIFT_EMIT_LOC_STRINGS = NO;
-				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
-				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2";
-				TEST_TARGET_NAME = hush;
-			};
-			name = Release;
-		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -589,15 +486,6 @@
 			buildConfigurations = (
 				E4D787512F86458600B40561 /* Debug */,
 				E4D787522F86458600B40561 /* Release */,
-			);
-			defaultConfigurationIsVisible = 0;
-			defaultConfigurationName = Release;
-		};
-		E4D787532F86458600B40561 /* Build configuration list for PBXNativeTarget "hushUITests" */ = {
-			isa = XCConfigurationList;
-			buildConfigurations = (
-				E4D787542F86458600B40561 /* Debug */,
-				E4D787552F86458600B40561 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
