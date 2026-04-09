@@ -100,7 +100,9 @@ final class AudioEngine: @unchecked Sendable {
             )
             sessionCategoryConfigured = true
         } catch {
+            #if DEBUG
             print("[Hush] Audio session configuration failed: \(error)")
+            #endif
         }
     }
 
@@ -109,7 +111,9 @@ final class AudioEngine: @unchecked Sendable {
         do {
             try AVAudioSession.sharedInstance().setActive(true)
         } catch {
+            #if DEBUG
             print("[Hush] Audio session activation failed: \(error)")
+            #endif
         }
     }
 
@@ -346,7 +350,9 @@ final class AudioEngine: @unchecked Sendable {
         engine.connect(sourceNode, to: mixerNode, format: format)
         sourceNodes[id] = sourceNode
 
+        #if DEBUG
         print("[Hush] Playing generated: \(config.type.rawValue)")
+        #endif
     }
 
     private func addSampleSource(id: UUID, config: SourceConfiguration) {
@@ -404,7 +410,9 @@ final class AudioEngine: @unchecked Sendable {
             }
         }
 
+        #if DEBUG
         print("[Hush] Playing sample: \(asset.displayName) [\(asset.id)]")
+        #endif
     }
 
     private func finishSampleSetup(id: UUID, config: SourceConfiguration, buffer: AVAudioPCMBuffer, asset: SoundAsset) {
@@ -428,7 +436,9 @@ final class AudioEngine: @unchecked Sendable {
             }
         }
 
+        #if DEBUG
         print("[Hush] Playing sample (cached): \(asset.displayName) [\(asset.id)]")
+        #endif
     }
 
     private func addLegacySampleSource(id: UUID, config: SourceConfiguration, fileName: String) {
@@ -458,7 +468,9 @@ final class AudioEngine: @unchecked Sendable {
             }
         }
 
+        #if DEBUG
         print("[Hush] Playing legacy sample: \(config.type.rawValue) (\(fileName))")
+        #endif
     }
 
     func removeSource(id: UUID) {
@@ -635,7 +647,9 @@ final class AudioEngine: @unchecked Sendable {
             fadeIn()
             updateNowPlaying()
         } catch {
+            #if DEBUG
             print("[Hush] Engine start failed: \(error)")
+            #endif
         }
     }
 
@@ -879,7 +893,9 @@ final class AudioEngine: @unchecked Sendable {
             } catch {
                 isPlaying = false
                 clearNowPlaying()
+                #if DEBUG
                 print("[Hush] Audio graph rebuild failed to restart playback: \(error)")
+                #endif
             }
         } else {
             isPlaying = false

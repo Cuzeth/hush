@@ -41,7 +41,9 @@ final class SampleLoopPlayer: @unchecked Sendable {
                 forResource: asset.fileName,
                 withExtension: asset.fileExtension
             ) else {
+                #if DEBUG
                 print("[Hush] Failed to find audio file: \(asset.subdirectory)/\(asset.fileName).\(asset.fileExtension)")
+                #endif
                 isLoaded = false
                 return
             }
@@ -146,10 +148,14 @@ final class SampleLoopPlayer: @unchecked Sendable {
                 let name = fileURL.lastPathComponent
                 let frames = loopBuffer?.frameLength ?? 0
                 let dur = Double(frames) / targetSampleRate
+                #if DEBUG
                 print("[Hush] Loaded sample: \(name) (\(String(format: "%.1f", dur))s, crossfade: \(Int(crossfadeDurationMs))ms)")
+                #endif
             }
         } catch {
+            #if DEBUG
             print("[Hush] Failed to load sample from \(fileURL.lastPathComponent): \(error)")
+            #endif
             isLoaded = false
         }
     }
