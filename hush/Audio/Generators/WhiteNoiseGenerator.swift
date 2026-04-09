@@ -11,6 +11,8 @@ final class WhiteNoiseGenerator: SoundGenerator, @unchecked Sendable {
 
     nonisolated(unsafe) private var rng: AudioRNG
 
+    // sampleRate accepted for API consistency with other generators but unused —
+    // white noise is sample-rate-independent.
     nonisolated init(sampleRate: Double = 44100) {
         self.rng = AudioRNG()
     }
