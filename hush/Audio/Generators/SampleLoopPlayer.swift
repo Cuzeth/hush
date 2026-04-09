@@ -2,12 +2,11 @@
 import Synchronization
 import os.log
 
-private let logger = Logger(subsystem: "dev.abdeen.hush", category: "SampleLoopPlayer")
-
 // Loads bundled audio samples and pre-bakes a seamless crossfade loop buffer
 // at load time. Designed for use with AVAudioPlayerNode.scheduleBuffer(.loops) —
 // no sample-level work happens in any real-time render callback.
 final class SampleLoopPlayer: @unchecked Sendable {
+    nonisolated private static let logger = Logger(subsystem: "dev.abdeen.hush", category: "SampleLoopPlayer")
     private let _volume = Atomic<UInt32>(0x3F80_0000) // 1.0f
     nonisolated(unsafe) private(set) var loopBuffer: AVAudioPCMBuffer?
     nonisolated(unsafe) private(set) var isLoaded = false
@@ -45,7 +44,7 @@ final class SampleLoopPlayer: @unchecked Sendable {
                 forResource: asset.fileName,
                 withExtension: asset.fileExtension
             ) else {
-                logger.error("Failed to find audio file: \(asset.subdirectory)/\(asset.fileName).\(asset.fileExtension)")
+                Self.logger.error("Failed to find audio file: \(asset.subdirectory)/\(asset.fileName).\(asset.fileExtension)")
                 isLoaded = false
                 return
             }
@@ -150,10 +149,10 @@ final class SampleLoopPlayer: @unchecked Sendable {
                 let name = fileURL.lastPathComponent
                 let frames = loopBuffer?.frameLength ?? 0
                 let dur = Double(frames) / targetSampleRate
-                logger.info("Loaded sample: \(name) (\(String(format: "%.1f", dur))s, crossfade: \(Int(crossfadeDurationMs))ms)")
+                Self.logger.info("Loaded sample: \(name) (\(String(format: "%.1f", dur))s, crossfade: \(Int(crossfadeDurationMs))ms)")
             }
         } catch {
-            logger.error("Failed to load sample from \(fileURL.lastPathComponent): \(error.localizedDescription)")
+            Self.logger.error("Failed to load sample from \(fileURL.lastPathComponent): \(error.localizedDescription)")
             isLoaded = false
         }
     }
