@@ -2,7 +2,7 @@
 import Synchronization
 import os.log
 
-private nonisolated(unsafe) let logger = Logger(subsystem: "dev.abdeen.hush", category: "SampleLoopPlayer")
+private let logger = Logger(subsystem: "dev.abdeen.hush", category: "SampleLoopPlayer")
 
 // Loads bundled audio samples and pre-bakes a seamless crossfade loop buffer
 // at load time. Designed for use with AVAudioPlayerNode.scheduleBuffer(.loops) —
