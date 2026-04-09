@@ -305,7 +305,6 @@ struct WhiteNoiseGeneratorTests {
     }
 
     @Test func volumeScalesOutput() {
-        let gen = WhiteNoiseGenerator()
         let frameCount = 4096
         let bufferFull = UnsafeMutablePointer<Float>.allocate(capacity: frameCount)
         let bufferHalf = UnsafeMutablePointer<Float>.allocate(capacity: frameCount)
@@ -933,6 +932,7 @@ struct SoundCategoryTests {
 
 // MARK: - SoundSource Tests
 
+@MainActor
 struct SoundSourceTests {
 
     @Test func codableRoundTrip() throws {
@@ -1041,6 +1041,7 @@ struct SoundSourceTests {
 
 // MARK: - Preset Tests
 
+@MainActor
 struct PresetTests {
 
     @Test func builtInPresetsAreNotEmpty() {
@@ -1102,6 +1103,7 @@ struct PresetTests {
     }
 }
 
+@MainActor
 struct SavedPresetTests {
 
     @Test func initEncodesSources() {
