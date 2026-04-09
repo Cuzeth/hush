@@ -1,5 +1,6 @@
-// DC blocking filter: y[n] = x[n] - x[n-1] + 0.995 * y[n-1]
-// Single-pole highpass at ~10 Hz for 44.1 kHz sample rate.
+// DC blocking filter: y[n] = x[n] - x[n-1] + R * y[n-1]
+// Single-pole highpass. R is computed from the sample rate and cutoff frequency
+// so the ~10 Hz cutoff is correct at any hardware sample rate.
 //
 // All state is nonisolated(unsafe) — only accessed from the audio render thread.
 final class DCBlockingFilter: @unchecked Sendable {
@@ -7,8 +8,8 @@ final class DCBlockingFilter: @unchecked Sendable {
     nonisolated(unsafe) private var y1: Float = 0
     private let coefficient: Float
 
-    nonisolated init(coefficient: Float = 0.995) {
-        self.coefficient = coefficient
+    nonisolated init(sampleRate: Double = 44100, cutoffHz: Double = 10.0) {
+        self.coefficient = Float(1.0 - (2.0 * Double.pi * cutoffHz / sampleRate))
     }
 
     nonisolated func process(_ input: Float) -> Float {

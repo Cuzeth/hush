@@ -13,10 +13,11 @@ final class BrownNoiseGenerator: SoundGenerator, @unchecked Sendable {
     }
 
     nonisolated(unsafe) private var lastOutput: Float = 0
-    nonisolated(unsafe) private var dcBlocker = DCBlockingFilter()
+    nonisolated(unsafe) private var dcBlocker: DCBlockingFilter
     nonisolated(unsafe) private var rng: AudioRNG
 
     nonisolated init(sampleRate: Double = 44100) {
+        self.dcBlocker = DCBlockingFilter(sampleRate: sampleRate)
         self.rng = AudioRNG()
     }
 
