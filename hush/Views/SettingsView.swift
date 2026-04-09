@@ -5,8 +5,8 @@ struct SettingsView: View {
     let viewModel: PlayerViewModel
 
     @AppStorage("autoResumeLast") private var autoResumeLast = false
-    @AppStorage("fadeDuration") private var fadeDuration: Double = 0.5
-    @AppStorage("binauralCarrier") private var binauralCarrier: Double = 200
+    @AppStorage("fadeDuration") private var fadeDuration: Double = AudioConstants.defaultFadeDuration
+    @AppStorage("binauralCarrier") private var binauralCarrier: Double = Double(AudioConstants.defaultBinauralCarrier)
 
     @State private var headphonesConnected = AudioEngine.headphonesConnected
     @State private var showCredits = false
