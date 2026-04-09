@@ -9,7 +9,10 @@ struct HushApp: App {
         do {
             return try ModelContainer(for: schema, configurations: [config])
         } catch {
-            fatalError("Could not create ModelContainer: \(error)")
+            // Fall back to in-memory store so the app remains usable after a
+            // schema migration failure instead of entering a permanent crash loop.
+            let fallback = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
+            return try! ModelContainer(for: schema, configurations: [fallback])
         }
     }()
 
