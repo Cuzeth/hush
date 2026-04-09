@@ -124,12 +124,16 @@ final class AudioEngine: @unchecked Sendable {
         let hwFormat = engine.outputNode.inputFormat(forBus: 0)
         actualSampleRate = hwFormat.sampleRate > 0 ? hwFormat.sampleRate : AudioConstants.sampleRate
 
-        format = AVAudioFormat(
+        guard let fmt = AVAudioFormat(
             commonFormat: .pcmFormatFloat32,
             sampleRate: actualSampleRate,
             channels: 2,
             interleaved: false
-        )!
+        ) else {
+            assertionFailure("Failed to create audio format at \(actualSampleRate) Hz")
+            return
+        }
+        format = fmt
 
         engine.connect(mixerNode, to: engine.outputNode, format: nil)
         registerEngineConfigurationObserver()
@@ -324,7 +328,10 @@ final class AudioEngine: @unchecked Sendable {
         // The generator is kept alive by the `generators` dictionary; the render
         // callback must not introduce ARC traffic via existential capture.
         let unmanagedGen = Unmanaged.passUnretained(generator)
-        let fmt = format!
+        guard let fmt = format else {
+            assertionFailure("Audio format not initialized")
+            return
+        }
 
         let sourceNode = AVAudioSourceNode(format: fmt) { (isSilence, _, frameCount, outputData) -> OSStatus in
             let gen = unmanagedGen.takeUnretainedValue()
