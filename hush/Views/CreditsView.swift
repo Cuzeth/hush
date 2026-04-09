@@ -22,14 +22,16 @@ struct CreditsView: View {
                                 detail: "MIT License"
                             )
 
-                            Link(destination: URL(string: "https://github.com/remvze/moodist")!) {
-                                HStack(spacing: 6) {
-                                    Image(systemName: "link")
-                                        .font(.caption)
-                                    Text("Moodist on GitHub")
-                                        .font(.subheadline)
+                            if let url = URL(string: "https://github.com/remvze/moodist") {
+                                Link(destination: url) {
+                                    HStack(spacing: 6) {
+                                        Image(systemName: "link")
+                                            .font(.caption)
+                                        Text("Moodist on GitHub")
+                                            .font(.subheadline)
+                                    }
+                                    .foregroundStyle(HushPalette.accentSoft)
                                 }
-                                .foregroundStyle(HushPalette.accentSoft)
                             }
                         }
 
