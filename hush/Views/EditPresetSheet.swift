@@ -6,6 +6,7 @@ struct EditPresetSheet: View {
     let onSave: (Preset, [SoundSource]) -> Void
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.horizontalSizeClass) private var sizeClass
 
     @State private var sources: [SoundSource]
     @State private var showAddSound = false
@@ -53,6 +54,8 @@ struct EditPresetSheet: View {
                     .padding(.horizontal, 20)
                     .padding(.top, 16)
                     .padding(.bottom, 28)
+                    .frame(maxWidth: sizeClass == .regular ? 600 : .infinity)
+                    .frame(maxWidth: .infinity)
                 }
             }
             .navigationTitle("Edit \(preset.name)")

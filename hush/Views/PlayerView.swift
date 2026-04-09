@@ -15,9 +15,14 @@ struct PlayerView: View {
 
     @Environment(\.modelContext) private var modelContext
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.horizontalSizeClass) private var sizeClass
 
     @ScaledMetric(relativeTo: .title) private var playButtonHeight: CGFloat = 62
     @ScaledMetric(relativeTo: .body) private var circleButtonSize: CGFloat = 44
+
+    private var contentMaxWidth: CGFloat {
+        sizeClass == .regular ? 600 : .infinity
+    }
 
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -39,10 +44,14 @@ struct PlayerView: View {
                 .padding(.horizontal, 20)
                 .padding(.top, 8)
                 .padding(.bottom, 120) // room for transport bar
+                .frame(maxWidth: contentMaxWidth)
+                .frame(maxWidth: .infinity)
             }
 
             // Fixed transport bar at bottom — always visible, no scrolling needed
             transportBar
+                .frame(maxWidth: contentMaxWidth)
+                .frame(maxWidth: .infinity)
         }
         .sensoryFeedback(.selection, trigger: viewModel.isPlaying)
         .sensoryFeedback(.selection, trigger: viewModel.currentPreset?.id)

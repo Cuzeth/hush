@@ -172,12 +172,13 @@ struct SoundPickerGrid: View {
     let onSelectAsset: (SoundAsset) -> Void
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.horizontalSizeClass) private var sizeClass
     @State private var expandedCategories: Set<SoundCategory> = []
 
-    private let columns = [
-        GridItem(.flexible(), spacing: 14),
-        GridItem(.flexible(), spacing: 14)
-    ]
+    private var columns: [GridItem] {
+        let count = sizeClass == .regular ? 3 : 2
+        return Array(repeating: GridItem(.flexible(), spacing: 14), count: count)
+    }
 
     private var activeAssetIDs: Set<String> {
         Set(activeSources.compactMap(\.assetID))

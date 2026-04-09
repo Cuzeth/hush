@@ -4,6 +4,7 @@ struct OnboardingView: View {
     let onComplete: (Preset?) -> Void
     @State private var page = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.horizontalSizeClass) private var sizeClass
 
     private let quickPresets: [Preset] = Array(Preset.builtIn.prefix(3))
 
@@ -28,6 +29,7 @@ struct OnboardingView: View {
                     readyPage.tag(2)
                 }
                 .tabViewStyle(.page(indexDisplayMode: .always))
+                .frame(maxWidth: sizeClass == .regular ? 500 : .infinity)
             }
         }
     }

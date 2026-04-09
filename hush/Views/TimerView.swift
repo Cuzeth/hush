@@ -3,6 +3,7 @@ import SwiftUI
 struct TimerView: View {
     @Bindable var viewModel: PlayerViewModel
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.horizontalSizeClass) private var sizeClass
     @State private var customMinutes = 25
 
     private let columns = [
@@ -87,7 +88,8 @@ struct TimerView: View {
                         .foregroundStyle(HushPalette.textSecondary)
                 }
             }
-            .frame(width: 220, height: 220)
+            .frame(width: sizeClass == .regular ? 280 : 220,
+                   height: sizeClass == .regular ? 280 : 220)
             .padding(.top, 4)
 
             HStack(spacing: 10) {
