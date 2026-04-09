@@ -309,10 +309,14 @@ final class AudioEngine: @unchecked Sendable {
         generator.volume = config.volume
         generators[id] = generator
 
-        let gen = generator
+        // Use Unmanaged to avoid ARC retain/release on the real-time audio thread.
+        // The generator is kept alive by the `generators` dictionary; the render
+        // callback must not introduce ARC traffic via existential capture.
+        let unmanagedGen = Unmanaged.passUnretained(generator)
         let fmt = format!
 
         let sourceNode = AVAudioSourceNode(format: fmt) { (isSilence, _, frameCount, outputData) -> OSStatus in
+            let gen = unmanagedGen.takeUnretainedValue()
             let abl = UnsafeMutableAudioBufferListPointer(outputData)
             let frames = Int(frameCount)
 
