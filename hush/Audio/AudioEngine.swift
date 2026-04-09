@@ -2,7 +2,7 @@ import AVFoundation
 import MediaPlayer
 import os.log
 
-private let logger = Logger(subsystem: "net.hush.audio", category: "AudioEngine")
+private nonisolated(unsafe) let logger = Logger(subsystem: "dev.abdeen.hush", category: "AudioEngine")
 
 // Central audio engine managing all sound generation and playback.
 // Generated sounds use AVAudioSourceNode (render callback).
