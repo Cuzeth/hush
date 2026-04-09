@@ -290,6 +290,8 @@ final class PlayerViewModel {
         }
     }
 
+    // NOTE: Called only from startTimer() with the full fresh duration.
+    // Do NOT call this when restoring a timer — the notification would be late.
     private func postTimerNotification(duration: TimeInterval) {
         let content = UNMutableNotificationContent()
         content.title = "Focus session complete"
