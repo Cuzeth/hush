@@ -15,6 +15,7 @@ final class PlayerViewModel {
     var showHeadphoneWarning = false
 
     var showBinauralRouteWarning = false
+    var errorMessage: String?
 
     let timerState = TimerState()
     @ObservationIgnored private var timerTask: Task<Void, Never>?
@@ -46,6 +47,10 @@ final class PlayerViewModel {
 
         engine.onPreviousPreset = { [weak self] in
             self?.cyclePreset(forward: false)
+        }
+
+        engine.onError = { [weak self] message in
+            self?.errorMessage = message
         }
 
         timerState.playChimeOnEnd = UserDefaults.standard.object(forKey: Self.timerPlayChimeKey) as? Bool ?? true

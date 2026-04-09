@@ -65,6 +65,14 @@ struct PlayerView: View {
         } message: {
             Text("Binaural beats were paused because headphones were disconnected. Reconnect headphones and press play to resume.")
         }
+        .alert("Audio Error", isPresented: Binding(
+            get: { viewModel.errorMessage != nil },
+            set: { if !$0 { viewModel.errorMessage = nil } }
+        )) {
+            Button("OK") {}
+        } message: {
+            Text(viewModel.errorMessage ?? "")
+        }
         .sheet(isPresented: $showSavePreset) {
             SavePresetSheet(
                 name: $presetName,

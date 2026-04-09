@@ -70,6 +70,7 @@ final class AudioEngine: @unchecked Sendable {
     var onPlaybackStateChanged: ((Bool) -> Void)?
     var onNextPreset: (() -> Void)?
     var onPreviousPreset: (() -> Void)?
+    var onError: ((String) -> Void)?
 
     // Displayed in Now Playing / lock screen
     var currentPresetName: String = "Hush"
@@ -659,6 +660,7 @@ final class AudioEngine: @unchecked Sendable {
             #if DEBUG
             print("[Hush] Engine start failed: \(error)")
             #endif
+            onError?("Audio engine failed to start. Please try again.")
         }
     }
 
