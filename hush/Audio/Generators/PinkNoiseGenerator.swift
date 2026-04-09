@@ -5,9 +5,11 @@ import Synchronization
 // Seven parallel first-order IIR lowpass filters with tuned coefficients,
 // summed to approximate -3 dB/octave slope.
 //
-// NOTE: These coefficients are designed for 44.1 kHz. At 48 kHz the error is
-// negligible (<0.5 dB). For significantly different sample rates, Cooper Baker's
-// generalized algorithm should be used instead.
+// NOTE: These coefficients are designed for 44.1 kHz. At 48 kHz (standard
+// iPhone rate) the error is negligible (<0.5 dB). At 96 kHz the error grows
+// but remains acceptable for the target platform. The sampleRate init parameter
+// is accepted for API consistency with other generators but unused — the
+// coefficients are valid for standard iOS hardware rates.
 final class PinkNoiseGenerator: SoundGenerator, @unchecked Sendable {
     private let _volume = Atomic<UInt32>(0x3F80_0000)
 

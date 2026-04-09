@@ -17,6 +17,9 @@ final class GrayNoiseGenerator: SoundGenerator, @unchecked Sendable {
     nonisolated(unsafe) private var filters: (BiquadState, BiquadState, BiquadState, BiquadState)
     nonisolated(unsafe) private var rng: AudioRNG
 
+    // NOTE: Biquad coefficients are sample-rate-dependent. A new instance must
+    // be created whenever the hardware sample rate changes. This is guaranteed
+    // by rebuildAudioGraph() which always creates fresh generators.
     nonisolated init(sampleRate: Double = 44100) {
         let sr = Float(sampleRate)
         filters = (
