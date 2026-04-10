@@ -376,7 +376,7 @@ struct PinkNoiseGeneratorTests {
     }
 
     @Test func lowerRMSThanWhiteNoise() {
-        // Pink noise should be quieter overall due to high-frequency attenuation
+        // Pink noise should be quieter due to IIR filtering and 0.11 gain scaling
         let white = WhiteNoiseGenerator()
         let pink = PinkNoiseGenerator()
         let frameCount = 44100
@@ -515,15 +515,13 @@ struct IsochronicToneGeneratorTests {
 
         gen.generateMono(into: buffer, frameCount: frameCount)
 
-        // Find peak and trough — amplitude modulation should create near-zero samples
+        // Find peak and check that amplitude modulation creates near-zero samples
         var maxAbs: Float = 0
-        var minAbs: Float = Float.greatestFiniteMagnitude
         var hasNearZero = false
 
         for i in 0..<frameCount {
             let absVal = abs(buffer[i])
             if absVal > maxAbs { maxAbs = absVal }
-            if absVal < minAbs { minAbs = absVal }
             if absVal < 0.01 { hasNearZero = true }
         }
 
@@ -1119,7 +1117,7 @@ struct SavedPresetTests {
         #expect(saved.sources[0].type == .pinkNoise)
     }
 
-    @Test func sourcesGetterCachesResult() {
+    @Test func sourcesGetterDecodesConsistently() {
         let saved = SavedPreset(name: "Test", icon: "star", sources: [
             SoundSource(type: .whiteNoise, volume: 1.0),
         ])
@@ -1170,7 +1168,7 @@ struct AudioConstantsTests {
 
     @Test func maxSourcesIsReasonable() {
         #expect(AudioConstants.maxSimultaneousSources > 0)
-        #expect(AudioConstants.maxSimultaneousSources <= 10)
+        #expect(AudioConstants.maxSimultaneousSources <= 6)
     }
 
     @Test func fadeDurationIsPositive() {
@@ -1184,6 +1182,306 @@ struct AudioConstantsTests {
     @Test func binauralCarrierIsInAudibleRange() {
         #expect(AudioConstants.defaultBinauralCarrier >= 100)
         #expect(AudioConstants.defaultBinauralCarrier <= 500)
+    }
+}
+
+// MARK: - Generator Edge Case & Stress Tests
+
+struct GeneratorSampleRateTests {
+
+    @Test func whiteNoiseAt48kHz() {
+        let gen = WhiteNoiseGenerator(sampleRate: 48000)
+        let frameCount = 48000
+        let buffer = UnsafeMutablePointer<Float>.allocate(capacity: frameCount)
+        defer { buffer.deallocate() }
+
+        gen.generateMono(into: buffer, frameCount: frameCount)
+
+        for i in 0..<frameCount {
+            #expect(buffer[i] >= -1.0 && buffer[i] <= 1.0)
+        }
+    }
+
+    @Test func brownNoiseAt48kHz() {
+        let gen = BrownNoiseGenerator(sampleRate: 48000)
+        let frameCount = 48000
+        let buffer = UnsafeMutablePointer<Float>.allocate(capacity: frameCount)
+        defer { buffer.deallocate() }
+
+        gen.generateMono(into: buffer, frameCount: frameCount)
+
+        for i in 0..<frameCount {
+            #expect(buffer[i].isFinite)
+            #expect(buffer[i] >= -1.0 && buffer[i] <= 1.0)
+        }
+    }
+
+    @Test func binauralBeatAt48kHz() {
+        let gen = BinauralBeatGenerator(sampleRate: 48000)
+        gen.beatFrequency = 10
+        gen.carrierFrequency = 200
+
+        let frameCount = 48000
+        let left = UnsafeMutablePointer<Float>.allocate(capacity: frameCount)
+        let right = UnsafeMutablePointer<Float>.allocate(capacity: frameCount)
+        defer { left.deallocate(); right.deallocate() }
+
+        gen.generateStereo(left: left, right: right, frameCount: frameCount)
+
+        for i in 0..<frameCount {
+            #expect(left[i] >= -1.0 && left[i] <= 1.0)
+            #expect(right[i] >= -1.0 && right[i] <= 1.0)
+        }
+    }
+
+    @Test func pureToneAt48kHz() {
+        let gen = PureToneGenerator(sampleRate: 48000)
+        gen.frequency = 440
+
+        let frameCount = 48000
+        let buffer = UnsafeMutablePointer<Float>.allocate(capacity: frameCount)
+        defer { buffer.deallocate() }
+
+        gen.generateMono(into: buffer, frameCount: frameCount)
+
+        for i in 0..<frameCount {
+            #expect(buffer[i] >= -1.0 && buffer[i] <= 1.0)
+        }
+    }
+
+    @Test func droneAt48kHz() {
+        let gen = DroneGenerator(sampleRate: 48000)
+        let frameCount = 48000
+        let buffer = UnsafeMutablePointer<Float>.allocate(capacity: frameCount)
+        defer { buffer.deallocate() }
+
+        gen.generateMono(into: buffer, frameCount: frameCount)
+
+        for i in 0..<frameCount {
+            #expect(buffer[i].isFinite)
+            #expect(buffer[i] >= -1.5 && buffer[i] <= 1.5)
+        }
+    }
+}
+
+struct GeneratorVolumeZeroTests {
+
+    @Test func whiteNoiseSilentAtZeroVolume() {
+        let gen = WhiteNoiseGenerator()
+        gen.volume = 0
+
+        let frameCount = 4096
+        let buffer = UnsafeMutablePointer<Float>.allocate(capacity: frameCount)
+        defer { buffer.deallocate() }
+
+        gen.generateMono(into: buffer, frameCount: frameCount)
+
+        for i in 0..<frameCount {
+            #expect(buffer[i] == 0.0, "White noise at volume 0 should produce silence")
+        }
+    }
+
+    @Test func pureToneSilentAtZeroVolume() {
+        let gen = PureToneGenerator()
+        gen.volume = 0
+        gen.frequency = 440
+
+        let frameCount = 4096
+        let buffer = UnsafeMutablePointer<Float>.allocate(capacity: frameCount)
+        defer { buffer.deallocate() }
+
+        gen.generateMono(into: buffer, frameCount: frameCount)
+
+        for i in 0..<frameCount {
+            #expect(buffer[i] == 0.0, "Pure tone at volume 0 should produce silence")
+        }
+    }
+
+    @Test func binauralSilentAtZeroVolume() {
+        let gen = BinauralBeatGenerator()
+        gen.volume = 0
+
+        let frameCount = 4096
+        let left = UnsafeMutablePointer<Float>.allocate(capacity: frameCount)
+        let right = UnsafeMutablePointer<Float>.allocate(capacity: frameCount)
+        defer { left.deallocate(); right.deallocate() }
+
+        gen.generateStereo(left: left, right: right, frameCount: frameCount)
+
+        for i in 0..<frameCount {
+            #expect(left[i] == 0.0 && right[i] == 0.0,
+                    "Binaural at volume 0 should produce silence")
+        }
+    }
+}
+
+struct BinauralEdgeCaseTests {
+
+    @Test func zeroBeatFrequencyProducesIdenticalChannels() {
+        let gen = BinauralBeatGenerator()
+        gen.beatFrequency = 0
+        gen.carrierFrequency = 200
+
+        let frameCount = 4096
+        let left = UnsafeMutablePointer<Float>.allocate(capacity: frameCount)
+        let right = UnsafeMutablePointer<Float>.allocate(capacity: frameCount)
+        defer { left.deallocate(); right.deallocate() }
+
+        gen.generateStereo(left: left, right: right, frameCount: frameCount)
+
+        for i in 0..<frameCount {
+            #expect(left[i] == right[i],
+                    "Zero beat frequency should produce identical L/R (pure carrier)")
+        }
+    }
+}
+
+struct FrequencyChangeTests {
+
+    @Test func pureToneFrequencyChangeAffectsOutput() {
+        let gen = PureToneGenerator()
+        gen.volume = 1.0
+        let frameCount = 4096
+
+        let buf1 = UnsafeMutablePointer<Float>.allocate(capacity: frameCount)
+        let buf2 = UnsafeMutablePointer<Float>.allocate(capacity: frameCount)
+        defer { buf1.deallocate(); buf2.deallocate() }
+
+        gen.frequency = 220
+        gen.generateMono(into: buf1, frameCount: frameCount)
+
+        // Reset phase by creating a new generator
+        let gen2 = PureToneGenerator()
+        gen2.volume = 1.0
+        gen2.frequency = 880
+        gen2.generateMono(into: buf2, frameCount: frameCount)
+
+        var differ = false
+        for i in 0..<frameCount where abs(buf1[i] - buf2[i]) > 0.001 {
+            differ = true
+            break
+        }
+        #expect(differ, "Different frequencies should produce different output")
+    }
+
+    @Test func droneFrequencyChangeAffectsOutput() {
+        let gen1 = DroneGenerator()
+        gen1.volume = 1.0
+        gen1.frequency = 220
+        let frameCount = 4096
+
+        let buf1 = UnsafeMutablePointer<Float>.allocate(capacity: frameCount)
+        let buf2 = UnsafeMutablePointer<Float>.allocate(capacity: frameCount)
+        defer { buf1.deallocate(); buf2.deallocate() }
+
+        gen1.generateMono(into: buf1, frameCount: frameCount)
+
+        let gen2 = DroneGenerator()
+        gen2.volume = 1.0
+        gen2.frequency = 880
+        gen2.generateMono(into: buf2, frameCount: frameCount)
+
+        var differ = false
+        for i in 0..<frameCount where abs(buf1[i] - buf2[i]) > 0.001 {
+            differ = true
+            break
+        }
+        #expect(differ, "Different frequencies should produce different output")
+    }
+}
+
+struct GeneratorStressTests {
+
+    @Test func allGeneratorsStableOver10Seconds() {
+        let frameCount = 48000 * 10  // 10 seconds at 48kHz
+        let buffer = UnsafeMutablePointer<Float>.allocate(capacity: frameCount)
+        defer { buffer.deallocate() }
+
+        let generators: [any SoundGenerator] = [
+            WhiteNoiseGenerator(sampleRate: 48000),
+            PinkNoiseGenerator(sampleRate: 48000),
+            BrownNoiseGenerator(sampleRate: 48000),
+            GrayNoiseGenerator(sampleRate: 48000),
+            PureToneGenerator(sampleRate: 48000),
+            DroneGenerator(sampleRate: 48000),
+        ]
+
+        for gen in generators {
+            gen.generateMono(into: buffer, frameCount: frameCount)
+
+            for i in 0..<frameCount {
+                #expect(buffer[i].isFinite, "Generator produced non-finite value at frame \(i)")
+            }
+        }
+    }
+
+    @Test func binauralStableOver10Seconds() {
+        let frameCount = 48000 * 10
+        let left = UnsafeMutablePointer<Float>.allocate(capacity: frameCount)
+        let right = UnsafeMutablePointer<Float>.allocate(capacity: frameCount)
+        defer { left.deallocate(); right.deallocate() }
+
+        let gen = BinauralBeatGenerator(sampleRate: 48000)
+        gen.beatFrequency = 10
+        gen.carrierFrequency = 200
+        gen.generateStereo(left: left, right: right, frameCount: frameCount)
+
+        for i in 0..<frameCount {
+            #expect(left[i].isFinite && right[i].isFinite,
+                    "Binaural produced non-finite value at frame \(i)")
+        }
+    }
+}
+
+// MARK: - Additional Model Tests
+
+@MainActor
+struct SoundSourceEdgeCaseTests {
+
+    @Test func invalidAssetIDReturnsNilResolvedAsset() {
+        let source = SoundSource(type: .sampleAsset, volume: 0.5, assetID: "nonexistent.fake.id")
+        #expect(source.resolvedAsset == nil)
+    }
+
+    @Test func defaultIsActiveIsTrue() {
+        let source = SoundSource(type: .whiteNoise, volume: 0.5)
+        #expect(source.isActive == true)
+    }
+}
+
+@MainActor
+struct PresetConstraintTests {
+
+    @Test func builtInPresetsRespectMaxSources() {
+        for preset in Preset.builtIn {
+            #expect(preset.sources.count <= AudioConstants.maxSimultaneousSources,
+                    "\(preset.name) has \(preset.sources.count) sources, max is \(AudioConstants.maxSimultaneousSources)")
+        }
+    }
+}
+
+@MainActor
+struct TimerStateEdgeCaseTests {
+
+    @Test func syncRemainingNeverGoesNegative() {
+        let state = TimerState()
+        let start = Date(timeIntervalSince1970: 6_000)
+
+        state.start(duration: 10, now: start)
+        // Way past expiry
+        let expired = state.syncRemaining(now: start.addingTimeInterval(10_000))
+
+        #expect(expired)
+        #expect(state.remainingSeconds >= 0)
+    }
+}
+
+struct DCBlockingFilterEdgeCaseTests {
+
+    @Test func zeroCutoffDoesNotCrash() {
+        let filter = DCBlockingFilter(sampleRate: 44100, cutoffHz: 0)
+        let output = filter.process(1.0)
+        #expect(output.isFinite)
     }
 }
 
