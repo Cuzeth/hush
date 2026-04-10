@@ -20,7 +20,7 @@ struct SettingsView: View {
                 HushBackdrop()
 
                 List {
-                    Section("Playback") {
+                    Section {
                         Toggle("Auto-resume last session", isOn: $autoResumeLast)
 
                         Toggle("Mix with other audio", isOn: $mixWithOtherAudio)
@@ -39,10 +39,11 @@ struct SettingsView: View {
                                 .accessibilityLabel("Fade duration")
                                 .accessibilityValue("\(fadeDuration, specifier: "%.1f") seconds")
                         }
+                    } header: {
+                        Text("Playback")
                     } footer: {
                         if !mixWithOtherAudio {
                             Text("Hush will appear in Now Playing and pause other audio apps.")
-                                .foregroundStyle(HushPalette.textSecondary)
                         }
                     }
 
