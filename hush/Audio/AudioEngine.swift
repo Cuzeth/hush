@@ -78,6 +78,7 @@ final class AudioEngine: @unchecked Sendable {
 
     // Displayed in Now Playing / lock screen
     var currentPresetName: String = "Hush"
+    var currentPresetIcon: String?
 
     private init() {
         // 200MB cache limit
@@ -871,12 +872,62 @@ final class AudioEngine: @unchecked Sendable {
         remoteCommandsConfigured = true
     }
 
+    private static let defaultNowPlayingIcon = "waveform"
+
+    private func renderNowPlayingArtwork() -> MPMediaItemArtwork? {
+        let symbolName = currentPresetIcon ?? Self.defaultNowPlayingIcon
+        let size = CGSize(width: 600, height: 600)
+
+        let renderer = UIGraphicsImageRenderer(size: size)
+        let image = renderer.image { ctx in
+            // Background matching the app theme
+            UIColor(red: 0.035, green: 0.036, blue: 0.044, alpha: 1).setFill()
+            ctx.fill(CGRect(origin: .zero, size: size))
+
+            // Subtle radial glow
+            let glowColor = UIColor(red: 0.412, green: 0.498, blue: 0.474, alpha: 0.3)
+            let gradient = CGGradient(
+                colorsSpace: CGColorSpaceCreateDeviceRGB(),
+                colors: [glowColor.cgColor, UIColor.clear.cgColor] as CFArray,
+                locations: [0, 1]
+            )!
+            ctx.cgContext.drawRadialGradient(
+                gradient,
+                startCenter: CGPoint(x: size.width / 2, y: size.height / 2),
+                startRadius: 0,
+                endCenter: CGPoint(x: size.width / 2, y: size.height / 2),
+                endRadius: size.width * 0.42,
+                options: []
+            )
+
+            // SF Symbol
+            let symbolSize: CGFloat = size.width * 0.35
+            let config = UIImage.SymbolConfiguration(pointSize: symbolSize, weight: .medium)
+            guard let symbol = UIImage(systemName: symbolName, withConfiguration: config) else { return }
+            let tinted = symbol.withTintColor(
+                UIColor(red: 0.690, green: 0.760, blue: 0.734, alpha: 1),
+                renderingMode: .alwaysOriginal
+            )
+            let symbolBounds = tinted.size
+            let origin = CGPoint(
+                x: (size.width - symbolBounds.width) / 2,
+                y: (size.height - symbolBounds.height) / 2
+            )
+            tinted.draw(at: origin)
+        }
+
+        return MPMediaItemArtwork(boundsSize: size) { _ in image }
+    }
+
     private func updateNowPlaying() {
         var info = [String: Any]()
         info[MPMediaItemPropertyTitle] = currentPresetName
         info[MPMediaItemPropertyArtist] = "Hush \u{2014} Focus Sounds"
         info[MPNowPlayingInfoPropertyIsLiveStream] = true
         info[MPNowPlayingInfoPropertyPlaybackRate] = 1.0
+        if let artwork = renderNowPlayingArtwork() {
+            info[MPMediaItemPropertyArtwork] = artwork
+        }
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
     }
 

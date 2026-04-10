@@ -203,6 +203,7 @@ final class PlayerViewModel {
         if activeSources.isEmpty { return }
         applyCurrentSources()
         engine.currentPresetName = currentPreset?.name ?? "Custom Mix"
+        engine.currentPresetIcon = currentPreset?.icon
         engine.start()
         withAnimation(.easeInOut(duration: 0.35)) {
             isPlaying = true
