@@ -324,6 +324,10 @@ final class PlayerViewModel {
         engine.setDefaultBinauralCarrier(frequency)
     }
 
+    func setMixWithOtherAudio(_ mix: Bool) {
+        engine.reconfigureAudioSession(mixWithOthers: mix)
+    }
+
     // MARK: - Last Session
 
     func saveLastSession() {

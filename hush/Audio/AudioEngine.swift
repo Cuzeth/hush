@@ -22,6 +22,7 @@ final class AudioEngine: @unchecked Sendable {
 
     private static let fadeDurationKey = "fadeDuration"
     private static let binauralCarrierKey = "binauralCarrier"
+    private static let mixWithOtherAudioKey = "mixWithOtherAudio"
 
     private var engine = AVAudioEngine()
     private var mixerNode = AVAudioMixerNode()
@@ -93,11 +94,19 @@ final class AudioEngine: @unchecked Sendable {
 
     private static var sessionCategoryConfigured = false
 
+    private static var mixWithOtherAudio: Bool {
+        let defaults = UserDefaults.standard
+        return defaults.object(forKey: mixWithOtherAudioKey) == nil
+            ? true
+            : defaults.bool(forKey: mixWithOtherAudioKey)
+    }
+
     private static func configureAudioSessionCategoryIfNeeded() {
         guard !sessionCategoryConfigured else { return }
         let session = AVAudioSession.sharedInstance()
         do {
-            try session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
+            let options: AVAudioSession.CategoryOptions = mixWithOtherAudio ? [.mixWithOthers] : []
+            try session.setCategory(.playback, mode: .default, options: options)
             let preferredRate = session.sampleRate > 0 ? session.sampleRate : 48_000
             try session.setPreferredIOBufferDuration(
                 Double(AudioConstants.preferredIOBufferFrameCount) / preferredRate
@@ -105,6 +114,26 @@ final class AudioEngine: @unchecked Sendable {
             sessionCategoryConfigured = true
         } catch {
             logger.error("Audio session configuration failed: \(error.localizedDescription)")
+        }
+    }
+
+    func reconfigureAudioSession(mixWithOthers: Bool) {
+        assertMainThread()
+        UserDefaults.standard.set(mixWithOthers, forKey: Self.mixWithOtherAudioKey)
+        let session = AVAudioSession.sharedInstance()
+        do {
+            let options: AVAudioSession.CategoryOptions = mixWithOthers ? [.mixWithOthers] : []
+            try session.setCategory(.playback, mode: .default, options: options)
+            Self.sessionCategoryConfigured = true
+            if isPlaying {
+                if mixWithOthers {
+                    clearNowPlaying()
+                } else {
+                    updateNowPlaying()
+                }
+            }
+        } catch {
+            logger.error("Audio session reconfiguration failed: \(error.localizedDescription)")
         }
     }
 
@@ -647,7 +676,11 @@ final class AudioEngine: @unchecked Sendable {
             isPlaying = true
             startAllPlayerNodes()
             fadeIn()
-            updateNowPlaying()
+            if Self.mixWithOtherAudio {
+                clearNowPlaying()
+            } else {
+                updateNowPlaying()
+            }
         } catch {
             logger.error("Engine start failed: \(error.localizedDescription)")
             onError?("Audio engine failed to start. Please try again.")

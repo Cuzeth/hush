@@ -5,6 +5,7 @@ struct SettingsView: View {
     let viewModel: PlayerViewModel
 
     @AppStorage("autoResumeLast") private var autoResumeLast = false
+    @AppStorage("mixWithOtherAudio") private var mixWithOtherAudio = true
     @AppStorage("fadeDuration") private var fadeDuration: Double = AudioConstants.defaultFadeDuration
     @AppStorage("binauralCarrier") private var binauralCarrier: Double = Double(AudioConstants.defaultBinauralCarrier)
 
@@ -22,6 +23,11 @@ struct SettingsView: View {
                     Section("Playback") {
                         Toggle("Auto-resume last session", isOn: $autoResumeLast)
 
+                        Toggle("Mix with other audio", isOn: $mixWithOtherAudio)
+                            .onChange(of: mixWithOtherAudio) { _, newValue in
+                                viewModel.setMixWithOtherAudio(newValue)
+                            }
+
                         VStack(alignment: .leading) {
                             HStack {
                                 Text("Fade duration")
@@ -32,6 +38,11 @@ struct SettingsView: View {
                             Slider(value: $fadeDuration, in: 0.1...2.0, step: 0.1)
                                 .accessibilityLabel("Fade duration")
                                 .accessibilityValue("\(fadeDuration, specifier: "%.1f") seconds")
+                        }
+                    } footer: {
+                        if !mixWithOtherAudio {
+                            Text("Hush will appear in Now Playing and pause other audio apps.")
+                                .foregroundStyle(HushPalette.textSecondary)
                         }
                     }
 
