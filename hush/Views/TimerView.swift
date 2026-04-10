@@ -170,10 +170,10 @@ struct TimerView: View {
                         .monospacedDigit()
                 }
 
-                Stepper(value: $customMinutes, in: 1...180, step: 1) {
-                    Text("Adjust duration")
-                        .foregroundStyle(HushPalette.textSecondary)
-                }
+                Slider(value: Binding(
+                    get: { Double(customMinutes) },
+                    set: { customMinutes = Int($0) }
+                ), in: 1...180, step: 1)
                 .tint(HushPalette.accentSoft)
 
                 Button {
