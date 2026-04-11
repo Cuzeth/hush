@@ -22,6 +22,12 @@
     </filter>
   </defs>
 
+  <!-- Clip for rounded corners -->
+  <clipPath id="roundedClip">
+    <rect width="1200" height="400" rx="16" ry="16"/>
+  </clipPath>
+  <g clip-path="url(#roundedClip)">
+
   <!-- Background -->
   <rect width="1200" height="400" fill="url(#bg)"/>
 
@@ -87,7 +93,8 @@
     <circle cx="950" cy="350" r="1"/><circle cx="1000" cy="350" r="1"/><circle cx="1050" cy="350" r="1"/><circle cx="1100" cy="350" r="1"/><circle cx="1150" cy="350" r="1"/>
   </g>
 
-  <!-- Top & bottom border lines -->
-  <line x1="0" y1="1" x2="1200" y2="1" stroke="#697f79" stroke-width="1" opacity="0.12"/>
-  <line x1="0" y1="399" x2="1200" y2="399" stroke="#697f79" stroke-width="1" opacity="0.12"/>
+  </g>
+
+  <!-- Rounded border -->
+  <rect width="1200" height="400" rx="16" ry="16" fill="none" stroke="#697f79" stroke-width="1" opacity="0.12"/>
 </svg>

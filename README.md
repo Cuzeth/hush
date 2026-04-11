@@ -4,13 +4,13 @@
 
 <p align="center">
   <a href="https://apps.apple.com/us/app/hush-focus-sounds/id6761935532">
-    <img src="https://img.shields.io/badge/App_Store-Download-blue?style=flat-square&logo=apple&logoColor=white" alt="App Store" />
+    <img src="https://img.shields.io/badge/App_Store-Download-blue?style=for-the-badge&logo=apple&logoColor=white" alt="App Store" />
   </a>
   <a href="LICENSE">
-    <img src="https://img.shields.io/badge/License-GPL--3.0-green?style=flat-square" alt="License" />
+    <img src="https://img.shields.io/badge/License-GPL--3.0-green?style=for-the-badge" alt="License" />
   </a>
-  <img src="https://img.shields.io/badge/Platform-iOS_18+-lightgrey?style=flat-square&logo=apple" alt="Platform" />
-  <img src="https://img.shields.io/badge/Swift-6-orange?style=flat-square&logo=swift&logoColor=white" alt="Swift" />
+  <img src="https://img.shields.io/badge/Platform-iOS_18+-lightgrey?style=for-the-badge&logo=apple" alt="Platform" />
+  <img src="https://img.shields.io/badge/Swift-6-orange?style=for-the-badge&logo=swift&logoColor=white" alt="Swift" />
 </p>
 
 <p align="center">
