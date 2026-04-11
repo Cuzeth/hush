@@ -16,7 +16,7 @@ Focus sounds for iOS. Real-time DSP noise generators, binaural beats, and a cura
 
 ## Building
 
-Open `hush.xcodeproj` in Xcode 16+ and build for iOS 17+.
+Open `hush.xcodeproj` in Xcode 16+ and build for iOS 18+.
 
 ## License
 

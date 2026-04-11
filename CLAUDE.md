@@ -8,7 +8,7 @@ Hush is a native iOS focus sounds app built with SwiftUI and AVFoundation. It mi
 
 ## Build & Test
 
-- Open `hush.xcodeproj` in Xcode 16+ and build for **iOS 17+**.
+- Open `hush.xcodeproj` in Xcode 16+ and build for **iOS 18+**.
 - Do NOT run `xcodebuild` or other Xcode CLI commands. The user will build and report errors from Xcode.
 - Tests run in CI via GitHub Actions on `macos-26` with the `hush` scheme targeting iOS Simulator.
 
