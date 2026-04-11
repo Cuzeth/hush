@@ -94,7 +94,7 @@ struct PlayerView: View {
                 presetIcon = "star.fill"
                 showSavePreset = false
             }
-            .presentationDetents([.medium])
+            .presentationDetents([.medium, .large])
             .presentationDragIndicator(.visible)
         }
     }
@@ -422,6 +422,7 @@ private struct SavePresetSheet: View {
                     .padding(.top, 16)
                     .padding(.bottom, 28)
                 }
+                .scrollDismissesKeyboard(.immediately)
             }
             .navigationTitle("Save Preset")
             .navigationBarTitleDisplayMode(.inline)

@@ -19,7 +19,9 @@
       "mcp__XcodeBuildMCP__screenshot",
       "mcp__XcodeBuildMCP__show_build_settings",
       "mcp__XcodeBuildMCP__get_sim_app_path",
-      "Bash(gh repo:*)"
+      "Bash(gh repo:*)",
+      "mcp__XcodeBuildMCP__start_sim_log_cap",
+      "mcp__XcodeBuildMCP__stop_sim_log_cap"
     ]
   },
   "enabledMcpjsonServers": [
