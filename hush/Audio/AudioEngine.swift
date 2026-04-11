@@ -1,4 +1,5 @@
 import AVFoundation
+import AudioToolbox
 import MediaPlayer
 import os.log
 
@@ -26,6 +27,7 @@ final class AudioEngine: @unchecked Sendable {
 
     private var engine = AVAudioEngine()
     private var mixerNode = AVAudioMixerNode()
+    private var limiterNode: AVAudioUnitEffect?
 
     // Generated sound sources (noise, binaural) — render callbacks
     private var sourceNodes: [UUID: AVAudioSourceNode] = [:]
@@ -165,8 +167,37 @@ final class AudioEngine: @unchecked Sendable {
         }
         format = fmt
 
-        engine.connect(mixerNode, to: engine.outputNode, format: nil)
+        // Insert a peak limiter between the mixer and output so layered sources
+        // can't sum past 0 dBFS and clip the DAC. Apple's AUPeakLimiter catches
+        // transients transparently; below threshold it's a bypass.
+        let limiter = Self.makePeakLimiter()
+        engine.attach(limiter)
+        engine.connect(mixerNode, to: limiter, format: format)
+        engine.connect(limiter, to: engine.outputNode, format: format)
+        Self.configurePeakLimiter(limiter)
+        limiterNode = limiter
+
         registerEngineConfigurationObserver()
+    }
+
+    private static func makePeakLimiter() -> AVAudioUnitEffect {
+        var desc = AudioComponentDescription()
+        desc.componentType = kAudioUnitType_Effect
+        desc.componentSubType = kAudioUnitSubType_PeakLimiter
+        desc.componentManufacturer = kAudioUnitManufacturer_Apple
+        desc.componentFlags = 0
+        desc.componentFlagsMask = 0
+        return AVAudioUnitEffect(audioComponentDescription: desc)
+    }
+
+    private static func configurePeakLimiter(_ limiter: AVAudioUnitEffect) {
+        // 1 ms attack — catches transient peaks before they clip.
+        // 50 ms decay — fast enough to avoid audible ducking on sustained content.
+        // PreGain 0 dB — we're catching peaks, not boosting.
+        guard let tree = limiter.auAudioUnit.parameterTree else { return }
+        tree.parameter(withAddress: AUParameterAddress(kLimiterParam_AttackTime))?.value = 0.001
+        tree.parameter(withAddress: AUParameterAddress(kLimiterParam_DecayTime))?.value = 0.05
+        tree.parameter(withAddress: AUParameterAddress(kLimiterParam_PreGain))?.value = 0
     }
 
     private func resetEngineGraph() {
