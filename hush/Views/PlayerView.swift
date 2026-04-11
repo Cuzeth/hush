@@ -127,6 +127,8 @@ struct PlayerView: View {
                         .background(Capsule().fill(HushPalette.accent))
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel("Timer")
+                    .accessibilityValue("\(viewModel.timerState.displayTime) remaining")
                 } else {
                     Button { viewModel.showTimer = true } label: {
                         Image(systemName: "timer")
@@ -135,6 +137,7 @@ struct PlayerView: View {
                             .frame(width: circleButtonSize, height: circleButtonSize)
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel("Timer")
                 }
 
                 Button { viewModel.showSettings = true } label: {
@@ -144,6 +147,7 @@ struct PlayerView: View {
                         .frame(width: circleButtonSize, height: circleButtonSize)
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("Settings")
             }
         }
         .accessibilityElement(children: .contain)
