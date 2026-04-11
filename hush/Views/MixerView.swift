@@ -28,11 +28,11 @@ struct MixerView: View {
             if viewModel.activeSources.isEmpty {
                 VStack(spacing: 12) {
                     Image(systemName: "waveform.badge.plus")
-                        .font(.system(size: 26))
+                        .font(.title)
                         .foregroundStyle(HushPalette.textSecondary)
 
                     Text("Build your own layer stack")
-                        .font(.system(size: 20, weight: .semibold, design: .serif))
+                        .font(.system(.title3, design: .serif, weight: .semibold))
                         .foregroundStyle(HushPalette.textPrimary)
 
                     Text("Add rain, noise, fire, or binaural beats and shape the mix with simple volume controls.")
@@ -258,7 +258,7 @@ struct SoundPickerGrid: View {
 
                     VStack(alignment: .leading, spacing: 2) {
                         Text(category.rawValue)
-                            .font(.system(size: 20, weight: .semibold, design: .serif))
+                            .font(.system(.title3, design: .serif, weight: .semibold))
                             .foregroundStyle(HushPalette.textPrimary)
 
                         Text("\(assets.count) sound\(assets.count == 1 ? "" : "s")")
@@ -319,7 +319,7 @@ struct SoundPickerGrid: View {
         VStack(alignment: .leading, spacing: 14) {
             VStack(alignment: .leading, spacing: 4) {
                 Text(title)
-                    .font(.system(size: 24, weight: .semibold, design: .serif))
+                    .font(.system(.title2, design: .serif, weight: .semibold))
                     .foregroundStyle(HushPalette.textPrimary)
 
                 Text(subtitle)

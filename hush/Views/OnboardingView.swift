@@ -3,6 +3,8 @@ import SwiftUI
 struct OnboardingView: View {
     let onComplete: (Preset?) -> Void
     @Environment(\.horizontalSizeClass) private var sizeClass
+    @ScaledMetric(relativeTo: .largeTitle) private var heroIconSize: CGFloat = 72
+    @ScaledMetric(relativeTo: .largeTitle) private var heroTitleSize: CGFloat = 36
 
     var body: some View {
         ZStack {
@@ -12,12 +14,12 @@ struct OnboardingView: View {
                 Spacer()
 
                 Image(systemName: "waveform.circle.fill")
-                    .font(.system(size: 72))
+                    .font(.system(size: heroIconSize))
                     .foregroundStyle(HushPalette.accent)
 
                 VStack(spacing: 10) {
                     Text("Hush")
-                        .font(.system(size: 36, weight: .bold, design: .serif))
+                        .font(.system(size: heroTitleSize, weight: .bold, design: .serif))
                         .foregroundStyle(HushPalette.textPrimary)
 
                     Text("Focus sounds for your brain.")

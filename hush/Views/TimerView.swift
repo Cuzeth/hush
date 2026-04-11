@@ -5,6 +5,7 @@ struct TimerView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.horizontalSizeClass) private var sizeClass
     @State private var customMinutes = 25
+    @ScaledMetric(relativeTo: .largeTitle) private var countdownFontSize: CGFloat = 38
 
     private let columns = [
         GridItem(.flexible(), spacing: 12),
@@ -47,7 +48,7 @@ struct TimerView: View {
     private var headerCard: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Let the room dim itself.")
-                .font(.system(size: 28, weight: .semibold, design: .serif))
+                .font(.system(.title, design: .serif, weight: .semibold))
                 .foregroundStyle(HushPalette.textPrimary)
 
             Text("Set a sleep timer, fade the mix gently over the last ten seconds, and let it keep counting even when Hush leaves the foreground.")
@@ -79,7 +80,7 @@ struct TimerView: View {
 
                 VStack(spacing: 6) {
                     Text(viewModel.timerState.displayTime)
-                        .font(.system(size: 38, weight: .semibold, design: .monospaced))
+                        .font(.system(size: countdownFontSize, weight: .semibold, design: .monospaced))
                         .foregroundStyle(HushPalette.textPrimary)
                         .contentTransition(.numericText())
 
@@ -125,7 +126,7 @@ struct TimerView: View {
         VStack(alignment: .leading, spacing: 22) {
             VStack(alignment: .leading, spacing: 8) {
                 Text("Quick starts")
-                    .font(.system(size: 28, weight: .semibold, design: .serif))
+                    .font(.system(.title, design: .serif, weight: .semibold))
                     .foregroundStyle(HushPalette.textPrimary)
 
                 Text("Choose a preset length or dial in your own.")

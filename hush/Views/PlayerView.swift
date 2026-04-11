@@ -160,7 +160,7 @@ struct PlayerView: View {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(currentTitle)
-                        .font(.system(size: 28, weight: .semibold, design: .serif))
+                        .font(.system(.title, design: .serif, weight: .semibold))
                         .foregroundStyle(HushPalette.textPrimary)
 
                     if !viewModel.activeSources.isEmpty {
