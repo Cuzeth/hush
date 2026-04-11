@@ -437,7 +437,14 @@ private struct SavePresetSheet: View {
                         .disabled(name.isEmpty)
                 }
             }
-            .onAppear { nameFieldFocused = true }
+            .task {
+                // Delay focus until the sheet finishes presenting. Focusing
+                // during the presentation animation forces UIKit to snapshot
+                // the keyboard before it's in a visible window, spiking the
+                // main thread and starving the audio render path.
+                try? await Task.sleep(for: .milliseconds(450))
+                nameFieldFocused = true
+            }
         }
         .tint(HushPalette.accentSoft)
     }
