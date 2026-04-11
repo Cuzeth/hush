@@ -1,18 +1,54 @@
-# Hush
+<p align="center">
+  <img src="Assets/banner.svg" alt="Hush — Focus Sounds for iOS" width="100%" />
+</p>
 
-Focus sounds for iOS. Real-time DSP noise generators, binaural beats, and a curated library of ambient recordings — all mixed together in a simple, distraction-free interface.
+<p align="center">
+  <a href="https://apps.apple.com/us/app/hush-focus-sounds/id6761935532">
+    <img src="https://img.shields.io/badge/App_Store-Download-blue?style=flat-square&logo=apple&logoColor=white" alt="App Store" />
+  </a>
+  <a href="LICENSE">
+    <img src="https://img.shields.io/badge/License-GPL--3.0-green?style=flat-square" alt="License" />
+  </a>
+  <img src="https://img.shields.io/badge/Platform-iOS_18+-lightgrey?style=flat-square&logo=apple" alt="Platform" />
+  <img src="https://img.shields.io/badge/Swift-6-orange?style=flat-square&logo=swift&logoColor=white" alt="Swift" />
+</p>
 
-## Features
+<p align="center">
+  Real-time DSP noise generators, binaural beats, and a curated library of 80+ ambient recordings<br/>
+  — all mixed together in a simple, distraction-free interface.
+</p>
 
-- **Noise generators**: White, pink, brown, and gray noise synthesized in real-time
-- **Binaural beats**: Alpha, SMR, Beta, and Gamma ranges with configurable carrier frequency
-- **Isochronic tones & monaural beats**: Alternative brainwave entrainment methods
-- **80+ ambient sounds**: Rain, fire, ocean, birds, cafe, train, and many more — organized by category
-- **Layer up to 6 sounds** with independent volume controls
-- **Built-in presets**: Focus, Deep Work, Sleep, Calm, Storm, Coffee Shop, Rainy Day, Forest, Cozy
-- **Focus timer** with fade-out
-- **Control Center / Lock Screen** integration
-- **No accounts, no analytics, no tracking**
+---
+
+### Noise Generators
+White, pink, brown, and gray noise synthesized in real-time.
+
+### Binaural Beats
+Alpha, SMR, Beta, and Gamma ranges with configurable carrier frequency.
+
+### Isochronic Tones & Monaural Beats
+Alternative brainwave entrainment methods that work with or without headphones.
+
+### 80+ Ambient Sounds
+Rain, fire, ocean, birds, cafe, train, forest, and many more — organized by category.
+
+### Layer & Mix
+Combine up to 6 sounds with independent volume controls.
+
+### Focus Timer
+Built-in timer with fade-out for focused work sessions.
+
+### Built-in Presets
+
+`Focus` `Deep Work` `Sleep` `Calm` `Storm` `Coffee Shop` `Rainy Day` `Forest` `Cozy`
+
+---
+
+### Privacy
+
+No accounts. No analytics. No tracking. Your sounds, your device, your business.
+
+---
 
 ## Building
 
