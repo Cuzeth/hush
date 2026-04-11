@@ -6,6 +6,9 @@
   <a href="https://apps.apple.com/us/app/hush-focus-sounds/id6761935532">
     <img src="https://img.shields.io/badge/App_Store-Download-blue?style=for-the-badge&logo=apple&logoColor=white" alt="App Store" />
   </a>
+  <a href="https://github.com/Cuzeth/hush/actions/workflows/tests.yml">
+    <img src="https://img.shields.io/github/actions/workflow/status/Cuzeth/hush/tests.yml?style=for-the-badge&label=Tests" alt="Tests" />
+  </a>
   <a href="LICENSE">
     <img src="https://img.shields.io/badge/License-GPL--3.0-green?style=for-the-badge" alt="License" />
   </a>
