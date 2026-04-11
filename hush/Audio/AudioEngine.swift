@@ -886,19 +886,20 @@ final class AudioEngine: @unchecked Sendable {
 
             // Subtle radial glow
             let glowColor = UIColor(red: 0.412, green: 0.498, blue: 0.474, alpha: 0.3)
-            let gradient = CGGradient(
+            if let gradient = CGGradient(
                 colorsSpace: CGColorSpaceCreateDeviceRGB(),
                 colors: [glowColor.cgColor, UIColor.clear.cgColor] as CFArray,
                 locations: [0, 1]
-            )!
-            ctx.cgContext.drawRadialGradient(
-                gradient,
-                startCenter: CGPoint(x: size.width / 2, y: size.height / 2),
-                startRadius: 0,
-                endCenter: CGPoint(x: size.width / 2, y: size.height / 2),
-                endRadius: size.width * 0.42,
-                options: []
-            )
+            ) {
+                ctx.cgContext.drawRadialGradient(
+                    gradient,
+                    startCenter: CGPoint(x: size.width / 2, y: size.height / 2),
+                    startRadius: 0,
+                    endCenter: CGPoint(x: size.width / 2, y: size.height / 2),
+                    endRadius: size.width * 0.42,
+                    options: []
+                )
+            }
 
             // SF Symbol
             let symbolSize: CGFloat = size.width * 0.35
