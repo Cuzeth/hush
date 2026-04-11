@@ -42,7 +42,9 @@ struct SettingsView: View {
                     } header: {
                         Text("Playback")
                     } footer: {
-                        if !mixWithOtherAudio {
+                        if mixWithOtherAudio {
+                            Text("Hush plays alongside music and podcasts. Turn this off to show playback controls in Control Center and on the lock screen.")
+                        } else {
                             Text("Hush will appear in Now Playing and pause other audio apps.")
                         }
                     }
