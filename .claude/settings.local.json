@@ -8,23 +8,8 @@
       "Bash(git add:*)",
       "Bash(git commit -m ':*)",
       "Bash(rm -f /Users/cuz/GitHub/hush/.git/index.lock)",
-      "Bash(git rm:*)",
       "WebSearch",
-      "mcp__XcodeBuildMCP__session_show_defaults",
-      "mcp__XcodeBuildMCP__discover_projs",
-      "mcp__XcodeBuildMCP__session_set_defaults",
-      "mcp__XcodeBuildMCP__build_sim",
-      "mcp__XcodeBuildMCP__list_sims",
-      "mcp__XcodeBuildMCP__build_run_sim",
-      "mcp__XcodeBuildMCP__screenshot",
-      "mcp__XcodeBuildMCP__show_build_settings",
-      "mcp__XcodeBuildMCP__get_sim_app_path",
-      "Bash(gh repo:*)",
-      "mcp__XcodeBuildMCP__start_sim_log_cap",
-      "mcp__XcodeBuildMCP__stop_sim_log_cap"
+      "Bash(grep:*)"
     ]
-  },
-  "enabledMcpjsonServers": [
-    "XcodeBuildMCP"
-  ]
+  }
 }
