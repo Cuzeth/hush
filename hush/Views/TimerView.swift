@@ -43,6 +43,9 @@ struct TimerView: View {
             }
         }
         .tint(HushPalette.accentSoft)
+        .sensoryFeedback(trigger: viewModel.timerState.isRunning) { _, isRunning in
+            isRunning ? .start : .stop
+        }
     }
 
     private var headerCard: some View {
@@ -77,6 +80,7 @@ struct TimerView: View {
                         style: StrokeStyle(lineWidth: 10, lineCap: .round)
                     )
                     .rotationEffect(.degrees(-90))
+                    .animation(.linear(duration: 1), value: viewModel.timerState.progress)
 
                 VStack(spacing: 6) {
                     Text(viewModel.timerState.displayTime)

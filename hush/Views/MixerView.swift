@@ -375,6 +375,7 @@ struct BinauralRangePicker: View {
                     let isSelected = source.binauralRange == range
                     Button {
                         viewModel.updateBinaural(for: source, range: range, frequency: range.defaultFrequency)
+
                     } label: {
                         Text(range.rawValue)
                             .font(.caption.weight(.semibold))
@@ -387,9 +388,11 @@ struct BinauralRangePicker: View {
                             )
                     }
                     .buttonStyle(HushPressButtonStyle())
+                    .animation(.easeInOut(duration: 0.15), value: source.binauralRange)
                 }
             }
         }
+        .sensoryFeedback(.selection, trigger: source.binauralRange)
     }
 }
 
@@ -416,8 +419,10 @@ private struct ToneFrequencyPicker: View {
                             )
                     }
                     .buttonStyle(HushPressButtonStyle())
+                    .animation(.easeInOut(duration: 0.15), value: source.toneFrequency)
                 }
             }
         }
+        .sensoryFeedback(.selection, trigger: source.toneFrequency)
     }
 }

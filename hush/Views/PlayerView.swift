@@ -55,6 +55,8 @@ struct PlayerView: View {
             .toolbar { toolbarItems }
             .sensoryFeedback(.selection, trigger: viewModel.isPlaying)
             .sensoryFeedback(.selection, trigger: viewModel.currentPreset?.id)
+            .sensoryFeedback(.impact(weight: .light), trigger: viewModel.showMixer)
+            .sensoryFeedback(.impact(weight: .light), trigger: viewModel.activeSources.count)
             .tint(HushPalette.accentSoft)
             .sheet(isPresented: $viewModel.showTimer) {
                 TimerView(viewModel: viewModel)
@@ -400,6 +402,7 @@ private struct SavePresetSheet: View {
                                     .buttonStyle(HushPressButtonStyle())
                                 }
                             }
+                            .sensoryFeedback(.selection, trigger: icon)
                         }
                         .padding(20)
                         .hushPanel(fill: HushPalette.surface.opacity(0.92))

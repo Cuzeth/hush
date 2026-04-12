@@ -227,15 +227,10 @@ struct PresetSelector: View {
 
             Spacer()
 
-            if isSelected {
-                Image(systemName: "checkmark.circle.fill")
-                    .font(.body)
-                    .foregroundStyle(HushPalette.accent)
-            } else {
-                Image(systemName: "play.circle")
-                    .font(.body)
-                    .foregroundStyle(HushPalette.textMuted)
-            }
+            Image(systemName: isSelected ? "checkmark.circle.fill" : "play.circle")
+                .font(.body)
+                .foregroundStyle(isSelected ? HushPalette.accent : HushPalette.textMuted)
+                .contentTransition(.symbolEffect(.replace))
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 13)

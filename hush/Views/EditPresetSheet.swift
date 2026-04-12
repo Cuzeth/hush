@@ -202,9 +202,11 @@ private struct EditToneFrequencyPicker: View {
                             )
                     }
                     .buttonStyle(HushPressButtonStyle())
+                    .animation(.easeInOut(duration: 0.15), value: source.toneFrequency)
                 }
             }
         }
+        .sensoryFeedback(.selection, trigger: source.toneFrequency)
     }
 }
 
@@ -236,8 +238,10 @@ private struct EditBinauralRangePicker: View {
                             )
                     }
                     .buttonStyle(HushPressButtonStyle())
+                    .animation(.easeInOut(duration: 0.15), value: source.binauralRange)
                 }
             }
         }
+        .sensoryFeedback(.selection, trigger: source.binauralRange)
     }
 }
