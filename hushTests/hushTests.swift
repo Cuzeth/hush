@@ -699,8 +699,8 @@ struct SoundTypeTests {
 
     @Test func generatedTypesAreCorrect() {
         let generated: [SoundType] = [.whiteNoise, .pinkNoise, .brownNoise, .grayNoise,
-                                       .binauralBeats, .isochronicTones, .monauralBeats,
-                                       .pureTone, .drone]
+                                       .speechMasking, .binauralBeats, .isochronicTones,
+                                       .monauralBeats, .pureTone, .drone]
         for type in generated {
             #expect(type.isGenerated, "\(type.rawValue) should be generated")
             #expect(!type.isLegacySample)
@@ -729,8 +729,8 @@ struct SoundTypeTests {
 
     @Test func generatedTypesHaveNoSampleFileName() {
         let generated: [SoundType] = [.whiteNoise, .pinkNoise, .brownNoise, .grayNoise,
-                                       .binauralBeats, .isochronicTones, .monauralBeats,
-                                       .pureTone, .drone]
+                                       .speechMasking, .binauralBeats, .isochronicTones,
+                                       .monauralBeats, .pureTone, .drone]
         for type in generated {
             #expect(type.sampleFileName == nil)
         }
@@ -948,6 +948,17 @@ struct SoundSourceTests {
         #expect(decoded.binauralFrequency == source.binauralFrequency)
         #expect(decoded.toneFrequency == source.toneFrequency)
         #expect(decoded.assetID == source.assetID)
+    }
+
+    @Test func codableRoundTripWithMaskingStrength() throws {
+        let source = SoundSource(type: .speechMasking, volume: 0.6, maskingStrength: 0.75)
+
+        let data = try JSONEncoder().encode(source)
+        let decoded = try JSONDecoder().decode(SoundSource.self, from: data)
+
+        #expect(decoded.type == .speechMasking)
+        #expect(decoded.volume == 0.6)
+        #expect(decoded.maskingStrength == 0.75)
     }
 
     @Test func codableRoundTripWithAsset() throws {

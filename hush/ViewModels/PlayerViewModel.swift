@@ -15,6 +15,7 @@ final class PlayerViewModel {
     var showHeadphoneWarning = false
 
     var showBinauralRouteWarning = false
+    var showBeatSafetyWarning = false
     var errorMessage: String?
 
     let timerState = TimerState()
@@ -138,6 +139,9 @@ final class PlayerViewModel {
         if type == .pureTone || type == .drone {
             source.toneFrequency = TonePreset.hz432.frequency
         }
+        if type == .speechMasking {
+            source.maskingStrength = 0.5
+        }
 
         withAnimation(.easeInOut(duration: 0.3)) {
             activeSources.append(source)
@@ -147,12 +151,17 @@ final class PlayerViewModel {
             showHeadphoneWarning = true
         }
 
+        if [SoundType.binauralBeats, .isochronicTones, .monauralBeats].contains(type) {
+            showBeatSafetyAlertIfNeeded()
+        }
+
         if isPlaying {
             engine.addSource(id: source.id, type: source.type, volume: source.volume,
                            binauralRange: source.binauralRange,
                            binauralFrequency: source.binauralFrequency,
                            toneFrequency: source.toneFrequency,
-                           assetID: source.assetID)
+                           assetID: source.assetID,
+                           maskingStrength: source.maskingStrength)
         }
     }
 
@@ -197,6 +206,19 @@ final class PlayerViewModel {
         engine.updateToneFrequency(for: source.id, frequency: frequency)
     }
 
+    func updateMaskingStrength(for source: SoundSource, strength: Float) {
+        guard let idx = activeSources.firstIndex(where: { $0.id == source.id }) else { return }
+        activeSources[idx].maskingStrength = strength
+        engine.updateMaskingStrength(for: source.id, strength: strength)
+    }
+
+    private func showBeatSafetyAlertIfNeeded() {
+        let key = "hasSeenBeatSafetyWarning"
+        guard !UserDefaults.standard.bool(forKey: key) else { return }
+        showBeatSafetyWarning = true
+        UserDefaults.standard.set(true, forKey: key)
+    }
+
     // MARK: - Playback
 
     func play() {
@@ -229,7 +251,8 @@ final class PlayerViewModel {
                            binauralRange: source.binauralRange,
                            binauralFrequency: source.binauralFrequency,
                            toneFrequency: source.toneFrequency,
-                           assetID: source.assetID)
+                           assetID: source.assetID,
+                           maskingStrength: source.maskingStrength)
         }
     }
 

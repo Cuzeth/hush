@@ -5,6 +5,9 @@ extension SoundSource {
         switch type {
         case .binauralBeats, .isochronicTones, .monauralBeats:
             return binauralRange?.description ?? "Realtime generator"
+        case .speechMasking:
+            let pct = Int((maskingStrength ?? 0.5) * 100)
+            return "Strength: \(pct)%"
         case .pureTone, .drone:
             if let freq = toneFrequency { return "\(Int(freq)) Hz" }
             return "432 Hz"
@@ -151,6 +154,10 @@ private struct SourceRow: View {
 
             if isBinauralType {
                 BinauralRangePicker(source: source, viewModel: viewModel)
+            }
+
+            if source.type == .speechMasking {
+                MaskingStrengthSlider(source: source, viewModel: viewModel)
             }
         }
         .padding(18)
@@ -393,6 +400,41 @@ struct BinauralRangePicker: View {
             }
         }
         .sensoryFeedback(.selection, trigger: source.binauralRange)
+    }
+}
+
+private struct MaskingStrengthSlider: View {
+    let source: SoundSource
+    let viewModel: PlayerViewModel
+    @State private var strength: Float
+
+    init(source: SoundSource, viewModel: PlayerViewModel) {
+        self.source = source
+        self.viewModel = viewModel
+        _strength = State(initialValue: source.maskingStrength ?? 0.5)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("Masking strength")
+                    .font(.caption)
+                    .foregroundStyle(HushPalette.textSecondary)
+                Spacer()
+                Text("\(Int(strength * 100))%")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(HushPalette.textSecondary)
+                    .monospacedDigit()
+            }
+            Slider(value: $strength, in: 0...1)
+                .tint(HushPalette.accentSoft)
+                .onChange(of: strength) {
+                    viewModel.updateMaskingStrength(for: source, strength: strength)
+                }
+                .accessibilityLabel("Masking strength")
+                .accessibilityValue("\(Int(strength * 100)) percent")
+        }
+        .sensoryFeedback(.selection, trigger: Int(strength * 10))
     }
 }
 

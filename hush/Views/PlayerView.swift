@@ -71,6 +71,11 @@ struct PlayerView: View {
             } message: {
                 Text("Binaural beats require headphones to work. Each ear must receive a different frequency without crosstalk.")
             }
+            .alert("Heads Up", isPresented: $viewModel.showBeatSafetyWarning) {
+                Button("Got It") {}
+            } message: {
+                Text("Binaural beats, isochronic tones, and monaural beats can cause discomfort in some people. Stop listening if you feel dizzy or unwell. If you have epilepsy or a seizure disorder, consult a doctor before use.")
+            }
             .alert("Headphones Disconnected", isPresented: $viewModel.showBinauralRouteWarning) {
                 Button("OK") {}
             } message: {
@@ -331,6 +336,8 @@ struct PlayerView: View {
             return [Color(red: 0.28, green: 0.40, blue: 0.31), Color(red: 0.12, green: 0.18, blue: 0.15)]
         case .fire, .thunder:
             return [Color(red: 0.44, green: 0.27, blue: 0.18), Color(red: 0.18, green: 0.11, blue: 0.10)]
+        case .speechMasking:
+            return [Color(red: 0.30, green: 0.33, blue: 0.38), Color(red: 0.14, green: 0.16, blue: 0.20)]
         case .binauralBeats, .isochronicTones, .monauralBeats, .pureTone, .drone:
             return [Color(red: 0.31, green: 0.25, blue: 0.44), Color(red: 0.16, green: 0.12, blue: 0.23)]
         case .whiteNoise, .pinkNoise, .brownNoise, .grayNoise:

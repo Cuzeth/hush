@@ -1,4 +1,5 @@
 import SwiftUI
+import SwiftData
 import AVFoundation
 
 struct SettingsView: View {
@@ -11,8 +12,10 @@ struct SettingsView: View {
 
     @State private var headphonesConnected = AudioEngine.headphonesConnected
     @State private var showCredits = false
+    @State private var showResetConfirmation = false
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.modelContext) private var modelContext
 
     var body: some View {
         NavigationStack {
@@ -129,6 +132,14 @@ struct SettingsView: View {
                             .font(.caption)
                             .foregroundStyle(HushPalette.textSecondary)
                     }
+
+                    Section {
+                        Button("Reset App", role: .destructive) {
+                            showResetConfirmation = true
+                        }
+                    } footer: {
+                        Text("Deletes all saved presets and preferences, then closes the app.")
+                    }
                 }
                 .scrollContentBackground(.hidden)
                 .listStyle(.insetGrouped)
@@ -149,6 +160,39 @@ struct SettingsView: View {
             .sheet(isPresented: $showCredits) {
                 CreditsView()
             }
+            .alert("Reset Hush?", isPresented: $showResetConfirmation) {
+                Button("Cancel", role: .cancel) {}
+                Button("Reset & Close", role: .destructive) {
+                    resetApp()
+                }
+            } message: {
+                Text("This will delete all saved presets, reset all settings to defaults, and close the app.")
+            }
+        }
+    }
+
+    private func resetApp() {
+        // Stop playback
+        viewModel.stop()
+        viewModel.stopTimer()
+
+        // Delete all saved presets
+        let descriptor = FetchDescriptor<SavedPreset>()
+        if let savedPresets = try? modelContext.fetch(descriptor) {
+            for preset in savedPresets {
+                modelContext.delete(preset)
+            }
+            try? modelContext.save()
+        }
+
+        // Nuke all UserDefaults for the app
+        if let bundleID = Bundle.main.bundleIdentifier {
+            UserDefaults.standard.removePersistentDomain(forName: bundleID)
+        }
+
+        // Close the app after a brief delay so the data wipe completes
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            exit(0)
         }
     }
 }

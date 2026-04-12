@@ -65,6 +65,15 @@ struct Preset: Identifiable, Codable {
             isBuiltIn: true
         ),
         Preset(
+            name: "Speech Mask",
+            icon: "person.wave.2",
+            sources: [
+                SoundSource(type: .speechMasking, volume: 0.6, maskingStrength: 0.6),
+                SoundSource(type: .brownNoise, volume: 0.25)
+            ],
+            isBuiltIn: true
+        ),
+        Preset(
             name: "Gamma Focus",
             icon: "bolt.trianglebadge.exclamationmark.fill",
             sources: [

@@ -19,6 +19,7 @@ final class AudioEngine: @unchecked Sendable {
         var binauralFrequency: Float?
         var toneFrequency: Float?
         var assetID: String?
+        var maskingStrength: Float?
     }
 
     private static let fadeDurationKey = "fadeDuration"
@@ -351,7 +352,8 @@ final class AudioEngine: @unchecked Sendable {
                    binauralRange: BinauralRange? = nil,
                    binauralFrequency: Float? = nil,
                    toneFrequency: Float? = nil,
-                   assetID: String? = nil) {
+                   assetID: String? = nil,
+                   maskingStrength: Float? = nil) {
         assertMainThread()
         let config = SourceConfiguration(
             type: type,
@@ -359,7 +361,8 @@ final class AudioEngine: @unchecked Sendable {
             binauralRange: binauralRange,
             binauralFrequency: binauralFrequency,
             toneFrequency: toneFrequency,
-            assetID: assetID
+            assetID: assetID,
+            maskingStrength: maskingStrength
         )
 
         sourceConfigurations[id] = config
@@ -383,6 +386,9 @@ final class AudioEngine: @unchecked Sendable {
             toneFrequency: config.toneFrequency
         )
         generator.volume = config.volume
+        if let gen = generator as? SpeechMaskingGenerator, let strength = config.maskingStrength {
+            gen.strength = strength
+        }
         generators[id] = generator
 
         // Capture an unretained reference to avoid ARC retain/release on the
@@ -640,6 +646,18 @@ final class AudioEngine: @unchecked Sendable {
         }
     }
 
+    func updateMaskingStrength(for id: UUID, strength: Float) {
+        assertMainThread()
+        if var config = sourceConfigurations[id] {
+            config.maskingStrength = strength
+            sourceConfigurations[id] = config
+        }
+
+        if let gen = generators[id] as? SpeechMaskingGenerator {
+            gen.strength = strength
+        }
+    }
+
     // MARK: - Per-Source Fade In/Out
 
     private func fadeInSource(id: UUID, targetVolume: Float, duration: TimeInterval = 0.5) {
@@ -855,6 +873,8 @@ final class AudioEngine: @unchecked Sendable {
             let gen = DroneGenerator(sampleRate: actualSampleRate)
             if let freq = toneFrequency { gen.frequency = freq }
             return gen
+        case .speechMasking:
+            return SpeechMaskingGenerator(sampleRate: actualSampleRate)
         default:
             assertionFailure("Use addSampleSource for non-generated types")
             return WhiteNoiseGenerator(sampleRate: actualSampleRate)

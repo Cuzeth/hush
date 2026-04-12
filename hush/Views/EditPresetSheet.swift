@@ -165,6 +165,10 @@ private struct EditSourceRow: View {
             if isBinauralType {
                 EditBinauralRangePicker(source: source, sources: $sources)
             }
+
+            if source.type == .speechMasking {
+                EditMaskingStrengthSlider(source: source, sources: $sources)
+            }
         }
         .padding(18)
         .hushPanel(radius: 26, fill: HushPalette.surface.opacity(0.94))
@@ -243,5 +247,43 @@ private struct EditBinauralRangePicker: View {
             }
         }
         .sensoryFeedback(.selection, trigger: source.binauralRange)
+    }
+}
+
+// MARK: - Masking Strength Slider (local)
+
+private struct EditMaskingStrengthSlider: View {
+    let source: SoundSource
+    @Binding var sources: [SoundSource]
+    @State private var strength: Float
+
+    init(source: SoundSource, sources: Binding<[SoundSource]>) {
+        self.source = source
+        self._sources = sources
+        _strength = State(initialValue: source.maskingStrength ?? 0.5)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("Masking strength")
+                    .font(.caption)
+                    .foregroundStyle(HushPalette.textSecondary)
+                Spacer()
+                Text("\(Int(strength * 100))%")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(HushPalette.textSecondary)
+                    .monospacedDigit()
+            }
+            Slider(value: $strength, in: 0...1)
+                .tint(HushPalette.accentSoft)
+                .onChange(of: strength) {
+                    if let idx = sources.firstIndex(where: { $0.id == source.id }) {
+                        sources[idx].maskingStrength = strength
+                    }
+                }
+                .accessibilityLabel("Masking strength")
+                .accessibilityValue("\(Int(strength * 100)) percent")
+        }
     }
 }

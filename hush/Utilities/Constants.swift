@@ -56,6 +56,7 @@ enum SoundType: String, Codable, CaseIterable, Identifiable {
     case monauralBeats = "Monaural Beats"
     case pureTone = "Pure Tone"
     case drone = "Drone"
+    case speechMasking = "Speech Masking"
     // Legacy sample types (kept for backward compat with saved presets)
     case rain = "Rain"
     case ocean = "Ocean"
@@ -80,6 +81,7 @@ enum SoundType: String, Codable, CaseIterable, Identifiable {
         case .monauralBeats: return "speaker.wave.2"
         case .pureTone: return "tuningfork"
         case .drone: return "waveform.circle"
+        case .speechMasking: return "person.wave.2"
         case .rain: return "cloud.rain"
         case .ocean: return "tropicalstorm"
         case .thunder: return "cloud.bolt"
@@ -95,7 +97,7 @@ enum SoundType: String, Codable, CaseIterable, Identifiable {
         switch self {
         case .whiteNoise, .pinkNoise, .brownNoise, .grayNoise,
              .binauralBeats, .isochronicTones, .monauralBeats,
-             .pureTone, .drone:
+             .pureTone, .drone, .speechMasking:
             return true
         default:
             return false

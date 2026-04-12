@@ -1,0 +1,43 @@
+name: Sound Request
+description: Suggest a new sound to add to the library
+labels: ["sound request"]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: What sound?
+      placeholder: "e.g. Train on tracks, typing on mechanical keyboard"
+    validations:
+      required: true
+  - type: dropdown
+    id: category
+    attributes:
+      label: Category
+      options:
+        - Rain
+        - Ocean
+        - Thunder
+        - Fire
+        - Wind
+        - Water
+        - Birds
+        - Animals
+        - Places
+        - Things
+        - Transport
+        - Urban
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: source
+    attributes:
+      label: Source / recording details
+      placeholder: "Link to recording, or 'I can record this'"
+  - type: input
+    id: license
+    attributes:
+      label: License
+      placeholder: "CC0, CC-BY, Pixabay, self-recorded, etc."
+    validations:
+      required: true

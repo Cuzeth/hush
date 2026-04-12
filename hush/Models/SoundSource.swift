@@ -13,12 +13,16 @@ struct SoundSource: Identifiable, Codable, Hashable {
     // Pure tone / drone frequency
     var toneFrequency: Float?
 
+    // Speech masking strength (0.0 = flat pink noise, 1.0 = full speech-band emphasis)
+    var maskingStrength: Float?
+
     // Asset-based sample: references a SoundAsset by its ID
     var assetID: String?
 
     init(type: SoundType, volume: Float = 0.7, isActive: Bool = true,
          binauralRange: BinauralRange? = nil, binauralFrequency: Float? = nil,
-         toneFrequency: Float? = nil, assetID: String? = nil) {
+         toneFrequency: Float? = nil, assetID: String? = nil,
+         maskingStrength: Float? = nil) {
         self.type = type
         self.volume = volume
         self.isActive = isActive
@@ -26,6 +30,7 @@ struct SoundSource: Identifiable, Codable, Hashable {
         self.binauralFrequency = binauralFrequency
         self.toneFrequency = toneFrequency
         self.assetID = assetID
+        self.maskingStrength = maskingStrength
     }
 
     /// Convenience initializer from a SoundAsset
@@ -54,6 +59,6 @@ struct SoundSource: Identifiable, Codable, Hashable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, type, volume, isActive, binauralRange, binauralFrequency, toneFrequency, assetID
+        case id, type, volume, isActive, binauralRange, binauralFrequency, toneFrequency, assetID, maskingStrength
     }
 }

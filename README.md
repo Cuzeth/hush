@@ -32,6 +32,9 @@ Alpha, SMR, Beta, and Gamma ranges with configurable carrier frequency.
 ### Isochronic Tones & Monaural Beats
 Alternative brainwave entrainment methods that work with or without headphones.
 
+### Speech Masking
+Shaped noise tuned to mask distracting conversations, with adjustable strength.
+
 ### 80+ Ambient Sounds
 Rain, fire, ocean, birds, cafe, train, forest, and many more — organized by category.
 
@@ -43,7 +46,7 @@ Built-in timer with fade-out for focused work sessions.
 
 ### Built-in Presets
 
-`Focus` `Deep Work` `Sleep` `Calm` `Storm` `Coffee Shop` `Rainy Day` `Forest` `Cozy`
+`Focus` `Deep Work` `Speech Mask` `Sleep` `Calm` `Storm` `Coffee Shop` `Rainy Day` `Forest` `Cozy`
 
 ---
 

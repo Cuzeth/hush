@@ -18,7 +18,7 @@ Hush is a native iOS focus sounds app built with SwiftUI and AVFoundation. It mi
 
 `AudioEngine` (singleton) owns the `AVAudioEngine` graph. Two playback paths:
 
-1. **Generated sources** — Real-time DSP via `AVAudioSourceNode` render callbacks. Each generator conforms to the `SoundGenerator` protocol (`generateMono`/`generateStereo`). Generators live in `Audio/Generators/` (white/pink/brown/gray noise, binaural beats, isochronic tones, monaural beats, pure tone, drone).
+1. **Generated sources** — Real-time DSP via `AVAudioSourceNode` render callbacks. Each generator conforms to the `SoundGenerator` protocol (`generateMono`/`generateStereo`). Generators live in `Audio/Generators/` (white/pink/brown/gray noise, speech masking, binaural beats, isochronic tones, monaural beats, pure tone, drone).
 2. **Sample sources** — `AVAudioPlayerNode` with looping `AVAudioPCMBuffer`. Buffers are lazy-loaded on a background queue and cached in an `NSCache` (200MB limit). `SampleLoopPlayer` handles file loading and sample-rate conversion.
 
 All audio-thread code is `nonisolated` and `Sendable`; generator references are passed to render callbacks via `Unmanaged` to avoid ARC on the real-time thread. Volume fading uses `mixerNode.outputVolume` (never in render callbacks).
