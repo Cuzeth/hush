@@ -71,7 +71,7 @@ struct MixerView: View {
                             )
                     )
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(HushPressButtonStyle())
             }
         }
         .sheet(isPresented: $showAddSound) {
@@ -274,7 +274,7 @@ struct SoundPickerGrid: View {
                         .rotationEffect(.degrees(isExpanded ? 90 : 0))
                 }
             }
-            .buttonStyle(.plain)
+            .buttonStyle(HushPressButtonStyle())
 
             if isExpanded {
                 LazyVGrid(columns: columns, spacing: 14) {
@@ -307,7 +307,7 @@ struct SoundPickerGrid: View {
                             .padding(16)
                             .hushPanel(radius: 26, fill: HushPalette.surface.opacity(0.94))
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(HushPressButtonStyle())
                     }
                 }
             }
@@ -357,7 +357,7 @@ struct SoundPickerGrid: View {
                         .padding(16)
                         .hushPanel(radius: 26, fill: HushPalette.surface.opacity(0.94))
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(HushPressButtonStyle())
                 }
             }
         }
@@ -386,7 +386,7 @@ struct BinauralRangePicker: View {
                                     .fill(isSelected ? HushPalette.accentSoft.opacity(0.3) : HushPalette.surfaceRaised.opacity(0.6))
                             )
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(HushPressButtonStyle())
                 }
             }
         }
@@ -415,7 +415,7 @@ private struct ToneFrequencyPicker: View {
                                     .fill(isSelected ? HushPalette.accentSoft.opacity(0.3) : HushPalette.surfaceRaised.opacity(0.6))
                             )
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(HushPressButtonStyle())
                 }
             }
         }

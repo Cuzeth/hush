@@ -115,7 +115,7 @@ struct TimerView: View {
                             )
                     )
             }
-            .buttonStyle(.plain)
+            .buttonStyle(HushPressButtonStyle())
         }
         .frame(maxWidth: .infinity)
         .padding(24)
@@ -153,7 +153,7 @@ struct TimerView: View {
                                     )
                             )
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(HushPressButtonStyle())
                 }
             }
 
@@ -187,7 +187,7 @@ struct TimerView: View {
                         .padding(.vertical, 16)
                         .background(HushPalette.accent, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(HushPrimaryButtonStyle())
             }
             .padding(20)
             .hushPanel(radius: 24, fill: HushPalette.surface.opacity(0.92))

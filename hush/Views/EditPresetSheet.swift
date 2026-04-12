@@ -48,7 +48,7 @@ struct EditPresetSheet: View {
                                         )
                                 )
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(HushPressButtonStyle())
                         }
                     }
                     .padding(.horizontal, 20)
@@ -201,7 +201,7 @@ private struct EditToneFrequencyPicker: View {
                                     .fill(isSelected ? HushPalette.accentSoft.opacity(0.3) : HushPalette.surfaceRaised.opacity(0.6))
                             )
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(HushPressButtonStyle())
                 }
             }
         }
@@ -235,7 +235,7 @@ private struct EditBinauralRangePicker: View {
                                     .fill(isSelected ? HushPalette.accentSoft.opacity(0.3) : HushPalette.surfaceRaised.opacity(0.6))
                             )
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(HushPressButtonStyle())
                 }
             }
         }

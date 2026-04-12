@@ -18,139 +18,123 @@ struct PlayerView: View {
     @Environment(\.horizontalSizeClass) private var sizeClass
 
     @ScaledMetric(relativeTo: .title) private var playButtonHeight: CGFloat = 62
-    @ScaledMetric(relativeTo: .body) private var circleButtonSize: CGFloat = 44
 
     private var contentMaxWidth: CGFloat {
         sizeClass == .regular ? 600 : .infinity
     }
 
     var body: some View {
-        ZStack(alignment: .bottom) {
-            HushBackdrop()
+        NavigationStack {
+            ZStack {
+                HushBackdrop()
 
-            // Scrollable content — padding at bottom for the fixed transport bar
-            ScrollView(showsIndicators: false) {
-                VStack(spacing: 16) {
-                    topBar
-                    nowPlayingHeader
-                    PresetSelector(
-                        onSelect: { preset in viewModel.loadPreset(preset) },
-                        onRandom: { viewModel.randomMix() },
-                        onDelete: { preset in viewModel.handlePresetDeleted(preset) },
-                        selectedPreset: viewModel.currentPreset
-                    )
-                    mixerSection
+                ScrollView(showsIndicators: false) {
+                    VStack(spacing: 16) {
+                        nowPlayingHeader
+                        PresetSelector(
+                            onSelect: { preset in viewModel.loadPreset(preset) },
+                            onRandom: { viewModel.randomMix() },
+                            onDelete: { preset in viewModel.handlePresetDeleted(preset) },
+                            selectedPreset: viewModel.currentPreset
+                        )
+                        mixerSection
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.top, 8)
+                    .frame(maxWidth: contentMaxWidth)
+                    .frame(maxWidth: .infinity)
                 }
-                .padding(.horizontal, 20)
-                .padding(.top, 8)
-                .padding(.bottom, 120) // room for transport bar
-                .frame(maxWidth: contentMaxWidth)
-                .frame(maxWidth: .infinity)
+                .safeAreaInset(edge: .bottom, spacing: 0) {
+                    transportBar
+                        .frame(maxWidth: contentMaxWidth)
+                        .frame(maxWidth: .infinity)
+                }
             }
-
-            // Fixed transport bar at bottom — always visible, no scrolling needed
-            transportBar
-                .frame(maxWidth: contentMaxWidth)
-                .frame(maxWidth: .infinity)
-        }
-        .sensoryFeedback(.selection, trigger: viewModel.isPlaying)
-        .sensoryFeedback(.selection, trigger: viewModel.currentPreset?.id)
-        .tint(HushPalette.accentSoft)
-        .sheet(isPresented: $viewModel.showTimer) {
-            TimerView(viewModel: viewModel)
+            .navigationTitle("Hush")
+            .navigationBarTitleDisplayMode(.large)
+            .toolbar { toolbarItems }
+            .sensoryFeedback(.selection, trigger: viewModel.isPlaying)
+            .sensoryFeedback(.selection, trigger: viewModel.currentPreset?.id)
+            .tint(HushPalette.accentSoft)
+            .sheet(isPresented: $viewModel.showTimer) {
+                TimerView(viewModel: viewModel)
+                    .presentationDetents([.medium, .large])
+                    .presentationDragIndicator(.visible)
+            }
+            .sheet(isPresented: $viewModel.showSettings) {
+                SettingsView(viewModel: viewModel)
+            }
+            .alert("Headphones Recommended", isPresented: $viewModel.showHeadphoneWarning) {
+                Button("OK") {}
+            } message: {
+                Text("Binaural beats require headphones to work. Each ear must receive a different frequency without crosstalk.")
+            }
+            .alert("Headphones Disconnected", isPresented: $viewModel.showBinauralRouteWarning) {
+                Button("OK") {}
+            } message: {
+                Text("Binaural beats were paused because headphones were disconnected. Reconnect headphones and press play to resume.")
+            }
+            .alert("Audio Error", isPresented: Binding(
+                get: { viewModel.errorMessage != nil },
+                set: { if !$0 { viewModel.errorMessage = nil } }
+            )) {
+                Button("OK") {}
+            } message: {
+                Text(viewModel.errorMessage ?? "")
+            }
+            .sheet(isPresented: $showSavePreset) {
+                SavePresetSheet(
+                    name: $presetName,
+                    icon: $presetIcon,
+                    iconChoices: Self.iconChoices
+                ) {
+                    guard !presetName.isEmpty else { return }
+                    viewModel.saveCurrentAsPreset(name: presetName, icon: presetIcon, context: modelContext)
+                    presetName = ""
+                    presetIcon = "star.fill"
+                    showSavePreset = false
+                }
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
-        }
-        .sheet(isPresented: $viewModel.showSettings) {
-            SettingsView(viewModel: viewModel)
-        }
-        .alert("Headphones Recommended", isPresented: $viewModel.showHeadphoneWarning) {
-            Button("OK") {}
-        } message: {
-            Text("Binaural beats require headphones to work. Each ear must receive a different frequency without crosstalk.")
-        }
-        .alert("Headphones Disconnected", isPresented: $viewModel.showBinauralRouteWarning) {
-            Button("OK") {}
-        } message: {
-            Text("Binaural beats were paused because headphones were disconnected. Reconnect headphones and press play to resume.")
-        }
-        .alert("Audio Error", isPresented: Binding(
-            get: { viewModel.errorMessage != nil },
-            set: { if !$0 { viewModel.errorMessage = nil } }
-        )) {
-            Button("OK") {}
-        } message: {
-            Text(viewModel.errorMessage ?? "")
-        }
-        .sheet(isPresented: $showSavePreset) {
-            SavePresetSheet(
-                name: $presetName,
-                icon: $presetIcon,
-                iconChoices: Self.iconChoices
-            ) {
-                guard !presetName.isEmpty else { return }
-                viewModel.saveCurrentAsPreset(name: presetName, icon: presetIcon, context: modelContext)
-                presetName = ""
-                presetIcon = "star.fill"
-                showSavePreset = false
             }
-            .presentationDetents([.medium, .large])
-            .presentationDragIndicator(.visible)
         }
     }
 
-    // MARK: - Top Bar (compact, app-native)
+    // MARK: - Toolbar
 
-    private var topBar: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Hush")
-                    .font(.title2.weight(.bold))
-                    .foregroundStyle(HushPalette.textPrimary)
-            }
-
-            Spacer()
-
-            HStack(spacing: 10) {
-                if viewModel.timerState.isRunning {
-                    Button { viewModel.showTimer = true } label: {
-                        HStack(spacing: 6) {
-                            Image(systemName: "timer")
-                                .font(.caption.weight(.bold))
-                            Text(viewModel.timerState.displayTime)
-                                .font(.caption.weight(.semibold))
-                                .monospacedDigit()
-                        }
-                        .foregroundStyle(Color.black)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
-                        .background(Capsule().fill(HushPalette.accent))
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Timer")
-                    .accessibilityValue("\(viewModel.timerState.displayTime) remaining")
-                } else {
-                    Button { viewModel.showTimer = true } label: {
+    @ToolbarContentBuilder
+    private var toolbarItems: some ToolbarContent {
+        ToolbarItemGroup(placement: .topBarTrailing) {
+            if viewModel.timerState.isRunning {
+                Button { viewModel.showTimer = true } label: {
+                    HStack(spacing: 6) {
                         Image(systemName: "timer")
-                            .font(.body.weight(.medium))
-                            .foregroundStyle(HushPalette.textSecondary)
-                            .frame(width: circleButtonSize, height: circleButtonSize)
+                            .font(.caption.weight(.bold))
+                        Text(viewModel.timerState.displayTime)
+                            .font(.caption.weight(.semibold))
+                            .monospacedDigit()
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Timer")
+                    .foregroundStyle(Color.black)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(Capsule().fill(HushPalette.accent))
                 }
-
-                Button { viewModel.showSettings = true } label: {
-                    Image(systemName: "gearshape")
-                        .font(.body.weight(.medium))
+                .accessibilityLabel("Timer")
+                .accessibilityValue("\(viewModel.timerState.displayTime) remaining")
+            } else {
+                Button { viewModel.showTimer = true } label: {
+                    Image(systemName: "timer")
                         .foregroundStyle(HushPalette.textSecondary)
-                        .frame(width: circleButtonSize, height: circleButtonSize)
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Settings")
+                .accessibilityLabel("Timer")
             }
+
+            Button { viewModel.showSettings = true } label: {
+                Image(systemName: "gearshape")
+                    .foregroundStyle(HushPalette.textSecondary)
+            }
+            .accessibilityLabel("Settings")
         }
-        .accessibilityElement(children: .contain)
     }
 
     // MARK: - Now Playing (concise state, not marketing copy)
@@ -218,7 +202,37 @@ struct PlayerView: View {
 
     private var mixerSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Button {
+            HStack {
+                Text("Customize")
+                    .font(.headline)
+                    .foregroundStyle(HushPalette.textPrimary)
+
+                Spacer()
+
+                HStack(spacing: 10) {
+                    if !viewModel.activeSources.isEmpty {
+                        Button {
+                            showSavePreset = true
+                        } label: {
+                            Image(systemName: "square.and.arrow.down")
+                                .font(.subheadline.weight(.medium))
+                                .foregroundStyle(HushPalette.textSecondary)
+                                .frame(width: 44, height: 44)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(HushPressButtonStyle())
+                        .accessibilityLabel("Save current mix as preset")
+                    }
+
+                    Image(systemName: viewModel.showMixer ? "chevron.up" : "chevron.down")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(HushPalette.textSecondary)
+                }
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 14)
+            .contentShape(Rectangle())
+            .onTapGesture {
                 if reduceMotion {
                     viewModel.showMixer.toggle()
                 } else {
@@ -226,36 +240,8 @@ struct PlayerView: View {
                         viewModel.showMixer.toggle()
                     }
                 }
-            } label: {
-                HStack {
-                    Text("Customize")
-                        .font(.headline)
-                        .foregroundStyle(HushPalette.textPrimary)
-
-                    Spacer()
-
-                    HStack(spacing: 10) {
-                        if !viewModel.activeSources.isEmpty {
-                            Button {
-                                showSavePreset = true
-                            } label: {
-                                Image(systemName: "square.and.arrow.down")
-                                    .font(.subheadline.weight(.medium))
-                                    .foregroundStyle(HushPalette.textSecondary)
-                            }
-                            .buttonStyle(.plain)
-                            .accessibilityLabel("Save current mix as preset")
-                        }
-
-                        Image(systemName: viewModel.showMixer ? "chevron.up" : "chevron.down")
-                            .font(.caption.weight(.bold))
-                            .foregroundStyle(HushPalette.textSecondary)
-                    }
-                }
-                .padding(.horizontal, 20)
-                .padding(.vertical, 14)
             }
-            .buttonStyle(.plain)
+            .accessibilityAddTraits(.isButton)
             .accessibilityLabel(viewModel.showMixer ? "Hide mixer" : "Show mixer")
 
             if viewModel.showMixer {
@@ -298,7 +284,7 @@ struct PlayerView: View {
                             .fill(viewModel.activeSources.isEmpty ? HushPalette.surfaceRaised : HushPalette.accent)
                     )
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(HushPrimaryButtonStyle())
                 .disabled(viewModel.activeSources.isEmpty)
                 .accessibilityLabel(viewModel.isPlaying ? "Pause" : "Play")
             }
@@ -411,7 +397,7 @@ private struct SavePresetSheet: View {
                                                     .fill(selected ? HushPalette.accent : HushPalette.surfaceRaised)
                                             )
                                     }
-                                    .buttonStyle(.plain)
+                                    .buttonStyle(HushPressButtonStyle())
                                 }
                             }
                         }

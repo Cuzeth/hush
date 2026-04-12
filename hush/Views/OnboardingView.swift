@@ -39,7 +39,7 @@ struct OnboardingView: View {
                         .frame(height: 56)
                         .background(Capsule().fill(HushPalette.accent))
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(HushPrimaryButtonStyle())
                 .padding(.horizontal, 32)
                 .padding(.bottom, 48)
             }

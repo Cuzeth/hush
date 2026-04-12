@@ -80,7 +80,7 @@ struct PresetSelector: View {
                     isSelected: false
                 )
             }
-            .buttonStyle(.plain)
+            .buttonStyle(HushRowButtonStyle())
             .accessibilityLabel("Random Mix — shuffle two to three sounds")
 
             ForEach(orderedPresets, id: \.preset.id) { entry in
@@ -96,7 +96,7 @@ struct PresetSelector: View {
                         isSelected: selected
                     )
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(HushRowButtonStyle())
                 .accessibilityLabel(preset.name)
                 .accessibilityHint("Double tap to play")
                 .contextMenu {

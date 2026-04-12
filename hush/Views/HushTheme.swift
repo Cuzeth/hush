@@ -151,3 +151,31 @@ struct HushCircleButtonStyle: ButtonStyle {
             .animation(.easeOut(duration: 0.18), value: configuration.isPressed)
     }
 }
+
+/// Subtle press feedback for interactive elements (icons, chips, cards).
+struct HushPressButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .opacity(configuration.isPressed ? 0.7 : 1)
+            .animation(.easeOut(duration: 0.15), value: configuration.isPressed)
+    }
+}
+
+/// Press highlight for full-width rows — slight brightness shift.
+struct HushRowButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .brightness(configuration.isPressed ? -0.06 : 0)
+            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+    }
+}
+
+/// Press feedback for primary action buttons (Play, Get Started).
+struct HushPrimaryButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.975 : 1)
+            .brightness(configuration.isPressed ? -0.08 : 0)
+            .animation(.snappy(duration: 0.15), value: configuration.isPressed)
+    }
+}
