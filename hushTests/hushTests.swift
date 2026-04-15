@@ -1,4 +1,6 @@
+import AVFoundation
 import Foundation
+import SwiftData
 import Testing
 @testable import hush
 
@@ -1496,7 +1498,212 @@ struct DCBlockingFilterEdgeCaseTests {
     }
 }
 
+// MARK: - UserSoundLibrary Tests
+
+@MainActor
+struct UserSoundLibraryTests {
+
+    @Test func importCreatesRecordAndCopiesFile() throws {
+        let env = try TestEnv.make()
+        let source = try env.makeAudioFixture(name: "tone", durationSeconds: 2.0)
+
+        let asset = try env.library.importSound(
+            from: source,
+            displayName: "My Tone",
+            category: .things
+        )
+
+        #expect(asset.displayName == "My Tone")
+        #expect(asset.category == .things)
+        #expect(asset.durationSeconds >= 1.9 && asset.durationSeconds <= 2.1)
+        #expect(asset.fileSizeBytes > 0)
+        #expect(env.library.assetsByID[asset.id] != nil)
+
+        let storedURL = env.library.url(for: asset)
+        #expect(FileManager.default.fileExists(atPath: storedURL.path))
+        #expect(asset.fileName.hasPrefix(asset.id.uuidString))
+    }
+
+    @Test func importRejectsTooShortClip() throws {
+        let env = try TestEnv.make()
+        let source = try env.makeAudioFixture(name: "blip", durationSeconds: 0.3)
+
+        do {
+            _ = try env.library.importSound(from: source, displayName: "Blip", category: .things)
+            Issue.record("Expected import to throw for short clip")
+        } catch let error as UserSoundImportError {
+            switch error {
+            case .tooShort: break
+            default: Issue.record("Wrong error type: \(error)")
+            }
+        }
+    }
+
+    @Test func importRejectsUnreadableFile() throws {
+        let env = try TestEnv.make()
+        let bogus = env.tempDir.appendingPathComponent("not-audio.mp3")
+        try Data("not actually audio".utf8).write(to: bogus)
+
+        do {
+            _ = try env.library.importSound(from: bogus, displayName: "Bad", category: .things)
+            Issue.record("Expected import to throw for unreadable file")
+        } catch let error as UserSoundImportError {
+            #expect(error == .unreadable)
+        }
+    }
+
+    @Test func deleteRemovesFileAndRecord() throws {
+        let env = try TestEnv.make()
+        let source = try env.makeAudioFixture(name: "tone", durationSeconds: 2.0)
+        let asset = try env.library.importSound(from: source, displayName: "Doomed", category: .things)
+        let id = asset.id
+        let storedURL = env.library.url(for: asset)
+
+        env.library.delete(asset)
+
+        #expect(env.library.assetsByID[id] == nil)
+        #expect(!FileManager.default.fileExists(atPath: storedURL.path))
+    }
+
+    @Test func registryResolvesUserAssetByID() throws {
+        let env = try TestEnv.make()
+        let source = try env.makeAudioFixture(name: "tone", durationSeconds: 2.0)
+        let asset = try env.library.importSound(from: source, displayName: "Routable", category: .things)
+
+        // Wire the registry hook the way HushApp.init does.
+        SoundAssetRegistry.userLookup = { id in env.library.asset(withID: id) }
+        defer { SoundAssetRegistry.userLookup = nil }
+
+        let resolved = SoundAssetRegistry.asset(withID: asset.assetID)
+        #expect(resolved != nil)
+        #expect(resolved?.displayName == "Routable")
+        #expect(resolved?.isUserImported == true)
+        #expect(resolved?.resolvedURL != nil)
+    }
+
+    @Test func verifyFlagsMissingFiles() throws {
+        let env = try TestEnv.make()
+        let source = try env.makeAudioFixture(name: "tone", durationSeconds: 2.0)
+        let asset = try env.library.importSound(from: source, displayName: "Will Disappear", category: .things)
+
+        // Simulate the user nuking the file from the Files app.
+        try FileManager.default.removeItem(at: env.library.url(for: asset))
+
+        let missing = env.library.verify()
+        #expect(missing.count == 1)
+        #expect(missing.first?.id == asset.id)
+        #expect(asset.isMissing == true)
+    }
+
+    @Test func relinkRebindsExistingRecord() throws {
+        let env = try TestEnv.make()
+        let original = try env.makeAudioFixture(name: "tone", durationSeconds: 2.0)
+        let asset = try env.library.importSound(from: original, displayName: "Rebindable", category: .things)
+        let originalID = asset.id
+
+        try FileManager.default.removeItem(at: env.library.url(for: asset))
+        env.library.verify()
+        #expect(asset.isMissing)
+
+        let replacement = try env.makeAudioFixture(name: "replacement", durationSeconds: 3.0)
+        try env.library.relink(asset, to: replacement)
+
+        #expect(asset.id == originalID, "ID must stay stable so saved presets keep working")
+        #expect(asset.isMissing == false)
+        #expect(asset.durationSeconds >= 2.9 && asset.durationSeconds <= 3.1)
+        #expect(FileManager.default.fileExists(atPath: env.library.url(for: asset).path))
+    }
+
+    @Test func updateMutatesAndPersists() throws {
+        let env = try TestEnv.make()
+        let source = try env.makeAudioFixture(name: "tone", durationSeconds: 2.0)
+        let asset = try env.library.importSound(from: source, displayName: "Original", category: .things)
+
+        env.library.update(asset) { rec in
+            rec.displayName = "Renamed"
+            rec.category = .urban
+            rec.crossfadeDurationMs = 300
+        }
+
+        #expect(asset.displayName == "Renamed")
+        #expect(asset.category == .urban)
+        #expect(asset.crossfadeDurationMs == 300)
+        // Verify the assetsByID snapshot also reflects the change.
+        #expect(env.library.assetsByID[asset.id]?.displayName == "Renamed")
+    }
+
+    @Test func totalDiskUsageSumsFileSizes() throws {
+        let env = try TestEnv.make()
+        let a = try env.makeAudioFixture(name: "a", durationSeconds: 2.0)
+        let b = try env.makeAudioFixture(name: "b", durationSeconds: 2.0)
+        let one = try env.library.importSound(from: a, displayName: "A", category: .things)
+        let two = try env.library.importSound(from: b, displayName: "B", category: .things)
+
+        #expect(env.library.totalDiskUsage == one.fileSizeBytes + two.fileSizeBytes)
+    }
+
+    @Test func emptyDisplayNameFallsBackToFilename() throws {
+        let env = try TestEnv.make()
+        let source = try env.makeAudioFixture(name: "Cool Sound", durationSeconds: 2.0)
+
+        let asset = try env.library.importSound(from: source, displayName: "  ", category: .things)
+        #expect(asset.displayName == "Cool Sound")
+    }
+
+    @Test func assetIDRoundTrip() {
+        let id = UUID()
+        let assetID = UserSoundAsset.assetID(for: id)
+        #expect(assetID.hasPrefix("user."))
+        #expect(UserSoundAsset.uuid(fromAssetID: assetID) == id)
+        #expect(UserSoundAsset.uuid(fromAssetID: "moodist.rain.heavy") == nil)
+        #expect(UserSoundAsset.uuid(fromAssetID: "user.") == nil)
+    }
+}
+
 // MARK: - Helpers
+
+@MainActor
+private struct TestEnv {
+    let library: UserSoundLibrary
+    let tempDir: URL
+
+    static func make() throws -> TestEnv {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("hush-tests-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+
+        let storage = tempDir.appendingPathComponent("UserSounds", isDirectory: true)
+        let schema = Schema([SavedPreset.self, UserSoundAsset.self])
+        let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
+        let container = try ModelContainer(for: schema, configurations: [config])
+        let context = ModelContext(container)
+        let library = UserSoundLibrary(modelContext: context, storageDirectory: storage)
+        return TestEnv(library: library, tempDir: tempDir)
+    }
+
+    /// Writes a short sine-wave WAV to the temp dir so import can probe it
+    /// with `AVAudioFile`. Avoids bundling fixtures.
+    func makeAudioFixture(name: String, durationSeconds: Double) throws -> URL {
+        let url = tempDir.appendingPathComponent("\(name).wav")
+        let sampleRate: Double = 44100
+        let frameCount = AVAudioFrameCount(sampleRate * durationSeconds)
+        guard let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1),
+              let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount) else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+        buffer.frameLength = frameCount
+        if let ch = buffer.floatChannelData?[0] {
+            let twoPiF = 2 * Float.pi * 440 / Float(sampleRate)
+            for i in 0..<Int(frameCount) {
+                ch[i] = sinf(twoPiF * Float(i)) * 0.2
+            }
+        }
+
+        let file = try AVAudioFile(forWriting: url, settings: format.settings)
+        try file.write(from: buffer)
+        return url
+    }
+}
 
 private func rms(_ buffer: UnsafeMutablePointer<Float>, count: Int) -> Float {
     var sum: Float = 0

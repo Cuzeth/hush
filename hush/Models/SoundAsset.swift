@@ -42,6 +42,7 @@ enum SoundLicense: String, Codable {
     case cc0 = "CC0"
     case pixabay = "Pixabay Content License"
     case mit = "MIT (Moodist)"
+    case userImported = "User Imported"
 }
 
 // MARK: - Crossfade Style
@@ -65,14 +66,73 @@ struct SoundAsset: Identifiable, Codable, Hashable {
     let crossfadeStyle: CrossfadeStyle
     let isMono: Bool
 
-    var icon: String { category.icon }
+    /// Optional override for the per-asset SF Symbol. Only set for user
+    /// imports today; bundled assets fall back to their category icon.
+    let iconOverride: String?
+
+    /// Absolute filesystem path for user-imported assets. When non-nil, the
+    /// loader uses this directly instead of resolving via Bundle.
+    let absolutePath: String?
+
+    /// Per-asset crossfade override in milliseconds. Lets user imports pick
+    /// any duration (or `0` for none) without inventing new `CrossfadeStyle`
+    /// cases. Bundled assets leave this nil and inherit from `crossfadeStyle`.
+    let crossfadeOverrideMs: Double?
+
+    init(
+        id: String,
+        displayName: String,
+        category: SoundCategory,
+        fileName: String,
+        fileExtension: String,
+        subdirectory: String,
+        license: SoundLicense,
+        crossfadeStyle: CrossfadeStyle,
+        isMono: Bool,
+        iconOverride: String? = nil,
+        absolutePath: String? = nil,
+        crossfadeOverrideMs: Double? = nil
+    ) {
+        self.id = id
+        self.displayName = displayName
+        self.category = category
+        self.fileName = fileName
+        self.fileExtension = fileExtension
+        self.subdirectory = subdirectory
+        self.license = license
+        self.crossfadeStyle = crossfadeStyle
+        self.isMono = isMono
+        self.iconOverride = iconOverride
+        self.absolutePath = absolutePath
+        self.crossfadeOverrideMs = crossfadeOverrideMs
+    }
+
+    var icon: String { iconOverride ?? category.icon }
+
+    var isUserImported: Bool { absolutePath != nil }
 
     nonisolated var crossfadeDurationMs: Double {
+        if let override = crossfadeOverrideMs { return override }
         switch crossfadeStyle {
         case .stochastic: return 100.0
         case .rhythmic: return 300.0
         case .percussive: return 50.0
         }
+    }
+
+    /// Resolved file URL: absolute path for user assets, bundle lookup for
+    /// bundled ones. Returns nil if a bundled asset's file is missing.
+    nonisolated var resolvedURL: URL? {
+        if let absolutePath {
+            let url = URL(fileURLWithPath: absolutePath)
+            return FileManager.default.fileExists(atPath: absolutePath) ? url : nil
+        }
+        if let url = Bundle.main.url(
+            forResource: fileName,
+            withExtension: fileExtension,
+            subdirectory: subdirectory
+        ) { return url }
+        return Bundle.main.url(forResource: fileName, withExtension: fileExtension)
     }
 
     func hash(into hasher: inout Hasher) { hasher.combine(id) }
@@ -82,14 +142,35 @@ struct SoundAsset: Identifiable, Codable, Hashable {
 // MARK: - Asset Registry
 
 enum SoundAssetRegistry {
-    static let all: [SoundAsset] = sampleAssets + moodistAssets
+    /// Bundled assets only — stable, always available.
+    static let bundled: [SoundAsset] = sampleAssets + moodistAssets
+
+    /// Hook the user library plugs into at app launch. Kept as a closure so
+    /// the registry stays a stateless enum and tests can inject fixtures.
+    /// The registry checks this only for IDs prefixed `user.`, so bundled
+    /// lookups stay zero-cost.
+    ///
+    /// Convention: all callers go through main. We use `nonisolated(unsafe)`
+    /// to match the surrounding codebase's pattern (audio engine asserts
+    /// main thread; views are MainActor by default).
+    nonisolated(unsafe) static var userLookup: ((String) -> SoundAsset?)?
+    nonisolated(unsafe) static var userAssetsProvider: (() -> [SoundAsset])?
+
+    /// All known assets — bundled plus whatever the user library currently
+    /// exposes. Used by category listings.
+    static var all: [SoundAsset] {
+        bundled + (userAssetsProvider?() ?? [])
+    }
 
     static func assets(for category: SoundCategory) -> [SoundAsset] {
         all.filter { $0.category == category }
     }
 
     static func asset(withID id: String) -> SoundAsset? {
-        all.first { $0.id == id }
+        if id.hasPrefix("user."), let userAsset = userLookup?(id) {
+            return userAsset
+        }
+        return bundled.first { $0.id == id }
     }
 
     // MARK: - Samples (Manual Downloads — CC0 / Pixabay)
