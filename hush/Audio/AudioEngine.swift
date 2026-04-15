@@ -506,7 +506,7 @@ final class AudioEngine: @unchecked Sendable {
                     // URL probe and now). Surface to the VM the same way a
                     // missing-URL asset does, and tear down the orphaned node
                     // so it doesn't sit attached forever.
-                    self.logger.warning("Sample buffer load failed: \(asset.id)")
+                    logger.warning("Sample buffer load failed: \(asset.id)")
                     if asset.id.hasPrefix("user.") {
                         self.onSampleAssetMissing?(asset.id)
                     }
@@ -578,7 +578,7 @@ final class AudioEngine: @unchecked Sendable {
                     // notify for user imports (the banner copy points at
                     // Settings → Imported Sounds).
                     let missingID = config.assetID ?? config.type.rawValue
-                    self.logger.warning("Legacy sample missing: \(missingID) (\(fileName))")
+                    logger.warning("Legacy sample missing: \(missingID) (\(fileName))")
                     if missingID.hasPrefix("user.") {
                         self.onSampleAssetMissing?(missingID)
                     }

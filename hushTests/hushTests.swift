@@ -818,6 +818,12 @@ struct TimerDurationTests {
 
 // MARK: - SoundAsset & Registry Tests
 
+// @MainActor: SoundAssetRegistry's user-asset accessors assert main-thread
+// when the user provider hook is wired (which other parallel test structs
+// do via `userLookup` / `userAssetsProvider`). Without @MainActor here,
+// these tests can run concurrently on a background thread and trip the
+// precondition even though they themselves don't touch user assets.
+@MainActor
 struct SoundAssetRegistryTests {
 
     @Test func registryIsNotEmpty() {
