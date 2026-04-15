@@ -34,6 +34,9 @@ struct ImportSoundSheet: View {
     @State private var isWorking = false
 
     @State private var previewPlayer: AVAudioPlayer?
+    /// Retained so the AVAudioPlayer delegate (which AVFoundation holds
+    /// weakly) stays alive long enough to fire `audioPlayerDidFinishPlaying`.
+    @State private var previewObserver: PreviewObserver?
 
     private static let iconChoices: [String] = [
         "music.note", "waveform", "speaker.wave.2.fill", "headphones",
@@ -338,6 +341,23 @@ struct ImportSoundSheet: View {
         do {
             let player = try AVAudioPlayer(contentsOf: url)
             player.volume = 0.6
+            // Flip the UI back to the play state when the file finishes
+            // naturally — AVAudioPlayer doesn't loop and there's no other
+            // signal, so the play button would stay in "playing" forever.
+            // Extract just the URL (Sendable) to release the security scope;
+            // capturing the whole Mode enum would drag in UserSoundAsset.
+            let scopedURL: URL? = {
+                if case .newImport(let url) = mode { return url }
+                return nil
+            }()
+            let observer = PreviewObserver { [_isPreviewing, _previewPlayer, scopedURL] in
+                _previewPlayer.wrappedValue?.stop()
+                _previewPlayer.wrappedValue = nil
+                _isPreviewing.wrappedValue = false
+                scopedURL?.stopAccessingSecurityScopedResource()
+            }
+            player.delegate = observer
+            previewObserver = observer
             player.prepareToPlay()
             player.play()
             previewPlayer = player
@@ -353,6 +373,7 @@ struct ImportSoundSheet: View {
     private func stopPreview() {
         previewPlayer?.stop()
         previewPlayer = nil
+        previewObserver = nil
         isPreviewing = false
         if case .newImport(let sourceURL) = mode {
             sourceURL.stopAccessingSecurityScopedResource()
@@ -437,5 +458,21 @@ struct ImportSoundSheet: View {
             if lower.contains(category.rawValue.lowercased()) { return category }
         }
         return .things
+    }
+}
+
+/// Bridges `AVAudioPlayerDelegate.audioPlayerDidFinishPlaying` to a Swift
+/// closure so the import sheet can flip its UI back to the play state when
+/// a preview ends naturally. AVFoundation holds the delegate weakly, so
+/// the sheet must retain this object via `@State`.
+private final class PreviewObserver: NSObject, AVAudioPlayerDelegate {
+    private let onFinish: @MainActor () -> Void
+
+    init(onFinish: @escaping @MainActor () -> Void) {
+        self.onFinish = onFinish
+    }
+
+    nonisolated func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
+        Task { @MainActor in onFinish() }
     }
 }
