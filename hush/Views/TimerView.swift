@@ -61,7 +61,7 @@ struct TimerView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(22)
-        .hushPanel(fill: HushPalette.surface.opacity(0.92))
+        .hushPanel(fill: HushPalette.panelFillSoft)
     }
 
     private var runningTimerView: some View {
@@ -123,7 +123,7 @@ struct TimerView: View {
         }
         .frame(maxWidth: .infinity)
         .padding(24)
-        .hushPanel(fill: HushPalette.surface.opacity(0.92))
+        .hushPanel(fill: HushPalette.panelFillSoft)
     }
 
     private var durationPicker: some View {
@@ -180,6 +180,9 @@ struct TimerView: View {
                     set: { customMinutes = Int($0) }
                 ), in: 1...180, step: 1)
                 .tint(HushPalette.accentSoft)
+                // Subtle click at every 5-minute detent — enough to feel
+                // tactile without being noisy.
+                .sensoryFeedback(.selection, trigger: customMinutes / 5)
 
                 Button {
                     viewModel.startTimer(duration: TimeInterval(customMinutes) * 60)
@@ -194,7 +197,7 @@ struct TimerView: View {
                 .buttonStyle(HushPrimaryButtonStyle())
             }
             .padding(20)
-            .hushPanel(radius: 24, fill: HushPalette.surface.opacity(0.92))
+            .hushPanel(radius: 24, fill: HushPalette.panelFillSoft)
 
             VStack(alignment: .leading, spacing: 12) {
                 Toggle("Play chime when done", isOn: Bindable(viewModel.timerState).playChimeOnEnd)
@@ -211,10 +214,10 @@ struct TimerView: View {
                     .lineSpacing(2)
             }
             .padding(20)
-            .hushPanel(radius: 24, fill: HushPalette.surface.opacity(0.92))
+            .hushPanel(radius: 24, fill: HushPalette.panelFillSoft)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(22)
-        .hushPanel(fill: HushPalette.surface.opacity(0.92))
+        .hushPanel(fill: HushPalette.panelFillSoft)
     }
 }

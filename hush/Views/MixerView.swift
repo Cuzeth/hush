@@ -93,11 +93,13 @@ private struct SourceRow: View {
     let source: SoundSource
     let viewModel: PlayerViewModel
     @State private var volume: Float
+    @State private var maskingStrength: Float
 
     init(source: SoundSource, viewModel: PlayerViewModel) {
         self.source = source
         self.viewModel = viewModel
         _volume = State(initialValue: source.volume)
+        _maskingStrength = State(initialValue: source.maskingStrength ?? 0.5)
     }
 
     var body: some View {
@@ -105,7 +107,7 @@ private struct SourceRow: View {
             HStack(spacing: 12) {
                 ZStack {
                     Circle()
-                        .fill(HushPalette.surfaceRaised.opacity(0.92))
+                        .fill(HushPalette.raisedFill)
                         .frame(width: 42, height: 42)
 
                     Image(systemName: source.displayIcon)
@@ -149,19 +151,26 @@ private struct SourceRow: View {
             .accessibilityValue("\(Int(volume * 100)) percent")
 
             if isToneType {
-                ToneFrequencyPicker(source: source, viewModel: viewModel)
+                ToneFrequencyPicker(selected: source.toneFrequency) { freq in
+                    viewModel.updateToneFrequency(for: source, frequency: freq)
+                }
             }
 
             if isBinauralType {
-                BinauralRangePicker(source: source, viewModel: viewModel)
+                BinauralRangePicker(selected: source.binauralRange) { range in
+                    viewModel.updateBinaural(for: source, range: range, frequency: range.defaultFrequency)
+                }
             }
 
             if source.type == .speechMasking {
-                MaskingStrengthSlider(source: source, viewModel: viewModel)
+                MaskingStrengthSlider(strength: $maskingStrength)
+                    .onChange(of: maskingStrength) {
+                        viewModel.updateMaskingStrength(for: source, strength: maskingStrength)
+                    }
             }
         }
         .padding(18)
-        .hushPanel(radius: 26, fill: HushPalette.surface.opacity(0.94))
+        .hushPanel(radius: 26)
     }
 
     private var isToneType: Bool {
@@ -293,7 +302,7 @@ struct SoundPickerGrid: View {
                             VStack(alignment: .leading, spacing: 14) {
                                 ZStack {
                                     Circle()
-                                        .fill(HushPalette.surfaceRaised.opacity(0.92))
+                                        .fill(HushPalette.raisedFill)
                                         .frame(width: 42, height: 42)
 
                                     Image(systemName: asset.icon)
@@ -312,7 +321,7 @@ struct SoundPickerGrid: View {
                             }
                             .frame(maxWidth: .infinity, minHeight: 142, alignment: .leading)
                             .padding(16)
-                            .hushPanel(radius: 26, fill: HushPalette.surface.opacity(0.94))
+                            .hushPanel(radius: 26)
                         }
                         .buttonStyle(HushPressButtonStyle())
                     }
@@ -343,7 +352,7 @@ struct SoundPickerGrid: View {
                         VStack(alignment: .leading, spacing: 14) {
                             ZStack {
                                 Circle()
-                                    .fill(HushPalette.surfaceRaised.opacity(0.92))
+                                    .fill(HushPalette.raisedFill)
                                     .frame(width: 42, height: 42)
 
                                 Image(systemName: type.icon)
@@ -362,7 +371,7 @@ struct SoundPickerGrid: View {
                         }
                         .frame(maxWidth: .infinity, minHeight: 142, alignment: .leading)
                         .padding(16)
-                        .hushPanel(radius: 26, fill: HushPalette.surface.opacity(0.94))
+                        .hushPanel(radius: 26)
                     }
                     .buttonStyle(HushPressButtonStyle())
                 }
@@ -371,19 +380,50 @@ struct SoundPickerGrid: View {
     }
 }
 
+// MARK: - Shared Pickers
+//
+// One set of controls used by both MixerView (live engine updates) and
+// EditPresetSheet (local state). Callers own the state and the write path.
+
+struct ToneFrequencyPicker: View {
+    let selected: Float?
+    let onSelect: (Float) -> Void
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(TonePreset.allCases) { preset in
+                    let isSelected = selected == preset.frequency
+                    Button { onSelect(preset.frequency) } label: {
+                        Text(preset.label)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(isSelected ? HushPalette.textPrimary : HushPalette.textSecondary)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 7)
+                            .background(
+                                Capsule()
+                                    .fill(isSelected ? HushPalette.chipActive : HushPalette.chipMuted)
+                            )
+                    }
+                    .buttonStyle(HushPressButtonStyle())
+                    .animation(.easeInOut(duration: 0.15), value: selected)
+                }
+            }
+        }
+        .sensoryFeedback(.selection, trigger: selected)
+    }
+}
+
 struct BinauralRangePicker: View {
-    let source: SoundSource
-    let viewModel: PlayerViewModel
+    let selected: BinauralRange?
+    let onSelect: (BinauralRange) -> Void
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
                 ForEach(BinauralRange.allCases) { range in
-                    let isSelected = source.binauralRange == range
-                    Button {
-                        viewModel.updateBinaural(for: source, range: range, frequency: range.defaultFrequency)
-
-                    } label: {
+                    let isSelected = selected == range
+                    Button { onSelect(range) } label: {
                         Text(range.rawValue)
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(isSelected ? HushPalette.textPrimary : HushPalette.textSecondary)
@@ -391,28 +431,21 @@ struct BinauralRangePicker: View {
                             .padding(.vertical, 7)
                             .background(
                                 Capsule()
-                                    .fill(isSelected ? HushPalette.accentSoft.opacity(0.3) : HushPalette.surfaceRaised.opacity(0.6))
+                                    .fill(isSelected ? HushPalette.chipActive : HushPalette.chipMuted)
                             )
                     }
                     .buttonStyle(HushPressButtonStyle())
-                    .animation(.easeInOut(duration: 0.15), value: source.binauralRange)
+                    .animation(.easeInOut(duration: 0.15), value: selected)
                 }
             }
         }
-        .sensoryFeedback(.selection, trigger: source.binauralRange)
+        .sensoryFeedback(.selection, trigger: selected)
     }
 }
 
-private struct MaskingStrengthSlider: View {
-    let source: SoundSource
-    let viewModel: PlayerViewModel
-    @State private var strength: Float
-
-    init(source: SoundSource, viewModel: PlayerViewModel) {
-        self.source = source
-        self.viewModel = viewModel
-        _strength = State(initialValue: source.maskingStrength ?? 0.5)
-    }
+struct MaskingStrengthSlider: View {
+    @Binding var strength: Float
+    @State private var dragEndTrigger = 0
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -426,45 +459,13 @@ private struct MaskingStrengthSlider: View {
                     .foregroundStyle(HushPalette.textSecondary)
                     .monospacedDigit()
             }
-            Slider(value: $strength, in: 0...1)
-                .tint(HushPalette.accentSoft)
-                .onChange(of: strength) {
-                    viewModel.updateMaskingStrength(for: source, strength: strength)
-                }
-                .accessibilityLabel("Masking strength")
-                .accessibilityValue("\(Int(strength * 100)) percent")
+            Slider(value: $strength, in: 0...1, onEditingChanged: { editing in
+                if !editing { dragEndTrigger &+= 1 }
+            })
+            .tint(HushPalette.accentSoft)
+            .accessibilityLabel("Masking strength")
+            .accessibilityValue("\(Int(strength * 100)) percent")
         }
-        .sensoryFeedback(.selection, trigger: Int(strength * 10))
-    }
-}
-
-private struct ToneFrequencyPicker: View {
-    let source: SoundSource
-    let viewModel: PlayerViewModel
-
-    var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                ForEach(TonePreset.allCases) { preset in
-                    let isSelected = source.toneFrequency == preset.frequency
-                    Button {
-                        viewModel.updateToneFrequency(for: source, frequency: preset.frequency)
-                    } label: {
-                        Text(preset.label)
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(isSelected ? HushPalette.textPrimary : HushPalette.textSecondary)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 7)
-                            .background(
-                                Capsule()
-                                    .fill(isSelected ? HushPalette.accentSoft.opacity(0.3) : HushPalette.surfaceRaised.opacity(0.6))
-                            )
-                    }
-                    .buttonStyle(HushPressButtonStyle())
-                    .animation(.easeInOut(duration: 0.15), value: source.toneFrequency)
-                }
-            }
-        }
-        .sensoryFeedback(.selection, trigger: source.toneFrequency)
+        .sensoryFeedback(.selection, trigger: dragEndTrigger)
     }
 }

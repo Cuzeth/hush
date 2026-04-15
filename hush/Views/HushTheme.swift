@@ -14,6 +14,13 @@ enum HushPalette {
     static let accentSoft = Color(red: 0.690, green: 0.760, blue: 0.734)
     static let accentGlow = Color(red: 0.412, green: 0.498, blue: 0.474)
     static let danger = Color(red: 0.924, green: 0.446, blue: 0.415)
+
+    // Semantic fills — keep per-site opacity tweaks rare.
+    static let panelFill = surface.opacity(0.94)       // Item cards, rows
+    static let panelFillSoft = surface.opacity(0.92)   // Outer panels
+    static let raisedFill = surfaceRaised.opacity(0.92) // Icon circles, strong chips
+    static let chipMuted = surfaceRaised.opacity(0.6)  // Unselected chip
+    static let chipActive = accentSoft.opacity(0.3)    // Selected chip
 }
 
 struct HushBackdrop: View {
@@ -97,8 +104,54 @@ private struct HushPanelModifier: ViewModifier {
 }
 
 extension View {
-    func hushPanel(radius: CGFloat = 28, fill: Color = HushPalette.surface.opacity(0.94)) -> some View {
+    func hushPanel(radius: CGFloat = 28, fill: Color = HushPalette.panelFill) -> some View {
         modifier(HushPanelModifier(radius: radius, fill: fill))
+    }
+}
+
+/// Inline warning banner — lighter-weight alternative to `.alert` for
+/// advisory messages (headphone tips, safety notes, route changes).
+struct HushBanner: View {
+    let icon: String
+    let title: String
+    let message: String
+    var accent: Color = HushPalette.accentSoft
+    let onDismiss: () -> Void
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: icon)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(accent)
+                .frame(width: 32, height: 32)
+                .background(Circle().fill(accent.opacity(0.18)))
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(HushPalette.textPrimary)
+                Text(message)
+                    .font(.caption)
+                    .foregroundStyle(HushPalette.textSecondary)
+                    .lineSpacing(2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 8)
+
+            Button(action: onDismiss) {
+                Image(systemName: "xmark")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(HushPalette.textSecondary)
+                    .frame(width: 32, height: 32)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(HushPressButtonStyle())
+            .accessibilityLabel("Dismiss")
+        }
+        .padding(14)
+        .hushPanel(radius: 20)
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -120,7 +173,7 @@ struct HushInfoPill: View {
         .padding(.vertical, 9)
         .background(
             Capsule()
-                .fill(highlighted ? HushPalette.accent : HushPalette.surfaceRaised.opacity(0.92))
+                .fill(highlighted ? HushPalette.accent : HushPalette.raisedFill)
                 .overlay(
                     Capsule()
                         .strokeBorder(
@@ -141,7 +194,7 @@ struct HushCircleButtonStyle: ButtonStyle {
             .frame(width: 48, height: 48)
             .background(
                 Circle()
-                    .fill(selected ? HushPalette.surfaceRaised : HushPalette.surface.opacity(0.92))
+                    .fill(selected ? HushPalette.surfaceRaised : HushPalette.panelFillSoft)
                     .overlay(
                         Circle()
                             .strokeBorder(selected ? HushPalette.outlineStrong : HushPalette.outline, lineWidth: 1)

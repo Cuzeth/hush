@@ -3,6 +3,54 @@ import SwiftData
 import AudioToolbox
 @preconcurrency import UserNotifications
 
+enum PlayerWarning: Identifiable, Equatable {
+    case headphonesRecommended
+    case beatSafety
+    case binauralRouteDisconnect
+
+    var id: String {
+        switch self {
+        case .headphonesRecommended: return "headphones"
+        case .beatSafety: return "beatSafety"
+        case .binauralRouteDisconnect: return "routeDisconnect"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .headphonesRecommended: return "headphones"
+        case .beatSafety: return "exclamationmark.triangle.fill"
+        case .binauralRouteDisconnect: return "ear.trianglebadge.exclamationmark"
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .headphonesRecommended: return "Headphones recommended"
+        case .beatSafety: return "A note on entrainment"
+        case .binauralRouteDisconnect: return "Headphones disconnected"
+        }
+    }
+
+    var message: String {
+        switch self {
+        case .headphonesRecommended:
+            return "Binaural beats need headphones — each ear has to hear its own frequency."
+        case .beatSafety:
+            return "Beats and tones can feel strange. Stop if you feel dizzy, and check with a doctor first if you have epilepsy."
+        case .binauralRouteDisconnect:
+            return "Playback paused. Reconnect headphones and press play to resume."
+        }
+    }
+
+    var accent: Color {
+        switch self {
+        case .beatSafety: return HushPalette.danger
+        default: return HushPalette.accentSoft
+        }
+    }
+}
+
 @MainActor
 @Observable
 final class PlayerViewModel {
@@ -12,10 +60,7 @@ final class PlayerViewModel {
     var showMixer = false
     var showTimer = false
     var showSettings = false
-    var showHeadphoneWarning = false
-
-    var showBinauralRouteWarning = false
-    var showBeatSafetyWarning = false
+    var activeWarning: PlayerWarning?
     var errorMessage: String?
 
     let timerState = TimerState()
@@ -32,7 +77,7 @@ final class PlayerViewModel {
             withAnimation(.easeInOut(duration: 0.35)) {
                 self.isPlaying = false
             }
-            self.showBinauralRouteWarning = true
+            self.showWarning(.binauralRouteDisconnect)
         }
 
         engine.onPlaybackStateChanged = { [weak self] playing in
@@ -148,7 +193,7 @@ final class PlayerViewModel {
         }
 
         if type == .binauralBeats && !AudioEngine.headphonesConnected {
-            showHeadphoneWarning = true
+            showWarning(.headphonesRecommended)
         }
 
         if [SoundType.binauralBeats, .isochronicTones, .monauralBeats].contains(type) {
@@ -215,8 +260,22 @@ final class PlayerViewModel {
     private func showBeatSafetyAlertIfNeeded() {
         let key = "hasSeenBeatSafetyWarning"
         guard !UserDefaults.standard.bool(forKey: key) else { return }
-        showBeatSafetyWarning = true
+        showWarning(.beatSafety)
         UserDefaults.standard.set(true, forKey: key)
+    }
+
+    /// Surface a warning as a banner. If a banner is already shown, replaces it
+    /// with the new one (the most recent cause is always the most relevant).
+    func showWarning(_ warning: PlayerWarning) {
+        withAnimation(.easeInOut(duration: 0.3)) {
+            activeWarning = warning
+        }
+    }
+
+    func dismissWarning() {
+        withAnimation(.easeInOut(duration: 0.3)) {
+            activeWarning = nil
+        }
     }
 
     // MARK: - Playback

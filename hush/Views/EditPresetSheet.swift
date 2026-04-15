@@ -104,11 +104,13 @@ private struct EditSourceRow: View {
     let source: SoundSource
     @Binding var sources: [SoundSource]
     @State private var volume: Float
+    @State private var maskingStrength: Float
 
     init(source: SoundSource, sources: Binding<[SoundSource]>) {
         self.source = source
         self._sources = sources
         _volume = State(initialValue: source.volume)
+        _maskingStrength = State(initialValue: source.maskingStrength ?? 0.5)
     }
 
     var body: some View {
@@ -116,7 +118,7 @@ private struct EditSourceRow: View {
             HStack(spacing: 12) {
                 ZStack {
                     Circle()
-                        .fill(HushPalette.surfaceRaised.opacity(0.92))
+                        .fill(HushPalette.raisedFill)
                         .frame(width: 42, height: 42)
                     Image(systemName: source.displayIcon)
                         .font(.headline)
@@ -159,131 +161,36 @@ private struct EditSourceRow: View {
                 }
 
             if source.type == .pureTone || source.type == .drone {
-                EditToneFrequencyPicker(source: source, sources: $sources)
+                ToneFrequencyPicker(selected: source.toneFrequency) { freq in
+                    if let idx = sources.firstIndex(where: { $0.id == source.id }) {
+                        sources[idx].toneFrequency = freq
+                    }
+                }
             }
 
             if isBinauralType {
-                EditBinauralRangePicker(source: source, sources: $sources)
+                BinauralRangePicker(selected: source.binauralRange) { range in
+                    if let idx = sources.firstIndex(where: { $0.id == source.id }) {
+                        sources[idx].binauralRange = range
+                        sources[idx].binauralFrequency = range.defaultFrequency
+                    }
+                }
             }
 
             if source.type == .speechMasking {
-                EditMaskingStrengthSlider(source: source, sources: $sources)
+                MaskingStrengthSlider(strength: $maskingStrength)
+                    .onChange(of: maskingStrength) {
+                        if let idx = sources.firstIndex(where: { $0.id == source.id }) {
+                            sources[idx].maskingStrength = maskingStrength
+                        }
+                    }
             }
         }
         .padding(18)
-        .hushPanel(radius: 26, fill: HushPalette.surface.opacity(0.94))
+        .hushPanel(radius: 26)
     }
 
     private var isBinauralType: Bool {
         [.binauralBeats, .isochronicTones, .monauralBeats].contains(source.type)
-    }
-}
-
-// MARK: - Tone Frequency Picker (local)
-
-private struct EditToneFrequencyPicker: View {
-    let source: SoundSource
-    @Binding var sources: [SoundSource]
-
-    var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                ForEach(TonePreset.allCases) { preset in
-                    let isSelected = source.toneFrequency == preset.frequency
-                    Button {
-                        if let idx = sources.firstIndex(where: { $0.id == source.id }) {
-                            sources[idx].toneFrequency = preset.frequency
-                        }
-                    } label: {
-                        Text(preset.label)
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(isSelected ? HushPalette.textPrimary : HushPalette.textSecondary)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 7)
-                            .background(
-                                Capsule()
-                                    .fill(isSelected ? HushPalette.accentSoft.opacity(0.3) : HushPalette.surfaceRaised.opacity(0.6))
-                            )
-                    }
-                    .buttonStyle(HushPressButtonStyle())
-                    .animation(.easeInOut(duration: 0.15), value: source.toneFrequency)
-                }
-            }
-        }
-        .sensoryFeedback(.selection, trigger: source.toneFrequency)
-    }
-}
-
-// MARK: - Binaural Range Picker (local)
-
-private struct EditBinauralRangePicker: View {
-    let source: SoundSource
-    @Binding var sources: [SoundSource]
-
-    var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                ForEach(BinauralRange.allCases) { range in
-                    let isSelected = source.binauralRange == range
-                    Button {
-                        if let idx = sources.firstIndex(where: { $0.id == source.id }) {
-                            sources[idx].binauralRange = range
-                            sources[idx].binauralFrequency = range.defaultFrequency
-                        }
-                    } label: {
-                        Text(range.rawValue)
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(isSelected ? HushPalette.textPrimary : HushPalette.textSecondary)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 7)
-                            .background(
-                                Capsule()
-                                    .fill(isSelected ? HushPalette.accentSoft.opacity(0.3) : HushPalette.surfaceRaised.opacity(0.6))
-                            )
-                    }
-                    .buttonStyle(HushPressButtonStyle())
-                    .animation(.easeInOut(duration: 0.15), value: source.binauralRange)
-                }
-            }
-        }
-        .sensoryFeedback(.selection, trigger: source.binauralRange)
-    }
-}
-
-// MARK: - Masking Strength Slider (local)
-
-private struct EditMaskingStrengthSlider: View {
-    let source: SoundSource
-    @Binding var sources: [SoundSource]
-    @State private var strength: Float
-
-    init(source: SoundSource, sources: Binding<[SoundSource]>) {
-        self.source = source
-        self._sources = sources
-        _strength = State(initialValue: source.maskingStrength ?? 0.5)
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text("Masking strength")
-                    .font(.caption)
-                    .foregroundStyle(HushPalette.textSecondary)
-                Spacer()
-                Text("\(Int(strength * 100))%")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(HushPalette.textSecondary)
-                    .monospacedDigit()
-            }
-            Slider(value: $strength, in: 0...1)
-                .tint(HushPalette.accentSoft)
-                .onChange(of: strength) {
-                    if let idx = sources.firstIndex(where: { $0.id == source.id }) {
-                        sources[idx].maskingStrength = strength
-                    }
-                }
-                .accessibilityLabel("Masking strength")
-                .accessibilityValue("\(Int(strength * 100)) percent")
-        }
     }
 }

@@ -49,6 +49,11 @@ struct PlayerView: View {
                         .frame(maxWidth: contentMaxWidth)
                         .frame(maxWidth: .infinity)
                 }
+                .safeAreaInset(edge: .top, spacing: 0) {
+                    warningBanner
+                        .frame(maxWidth: contentMaxWidth)
+                        .frame(maxWidth: .infinity)
+                }
             }
             .navigationTitle("Hush")
             .navigationBarTitleDisplayMode(.large)
@@ -65,21 +70,6 @@ struct PlayerView: View {
             }
             .sheet(isPresented: $viewModel.showSettings) {
                 SettingsView(viewModel: viewModel)
-            }
-            .alert("Headphones Recommended", isPresented: $viewModel.showHeadphoneWarning) {
-                Button("OK") {}
-            } message: {
-                Text("Binaural beats require headphones to work. Each ear must receive a different frequency without crosstalk.")
-            }
-            .alert("Heads Up", isPresented: $viewModel.showBeatSafetyWarning) {
-                Button("Got It") {}
-            } message: {
-                Text("Binaural beats, isochronic tones, and monaural beats can cause discomfort in some people. Stop listening if you feel dizzy or unwell. If you have epilepsy or a seizure disorder, consult a doctor before use.")
-            }
-            .alert("Headphones Disconnected", isPresented: $viewModel.showBinauralRouteWarning) {
-                Button("OK") {}
-            } message: {
-                Text("Binaural beats were paused because headphones were disconnected. Reconnect headphones and press play to resume.")
             }
             .alert("Audio Error", isPresented: Binding(
                 get: { viewModel.errorMessage != nil },
@@ -187,7 +177,7 @@ struct PlayerView: View {
                             .padding(.vertical, 7)
                             .background(
                                 Capsule()
-                                    .fill(HushPalette.surfaceRaised.opacity(0.9))
+                                    .fill(HushPalette.raisedFill)
                                     .overlay(Capsule().strokeBorder(HushPalette.outline, lineWidth: 1))
                             )
                         }
@@ -219,6 +209,7 @@ struct PlayerView: View {
                 HStack(spacing: 10) {
                     if !viewModel.activeSources.isEmpty {
                         Button {
+                            presetName = defaultPresetName
                             showSavePreset = true
                         } label: {
                             Image(systemName: "square.and.arrow.down")
@@ -258,7 +249,29 @@ struct PlayerView: View {
                     .transition(reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
             }
         }
-        .hushPanel(fill: HushPalette.surface.opacity(0.92))
+        .hushPanel(fill: HushPalette.panelFillSoft)
+    }
+
+    // MARK: - Warning Banner (in place of the old stacked .alerts)
+
+    @ViewBuilder
+    private var warningBanner: some View {
+        if let warning = viewModel.activeWarning {
+            HushBanner(
+                icon: warning.icon,
+                title: warning.title,
+                message: warning.message,
+                accent: warning.accent
+            ) {
+                viewModel.dismissWarning()
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 4)
+            .padding(.bottom, 6)
+            .transition(reduceMotion
+                        ? .opacity
+                        : .move(edge: .top).combined(with: .opacity))
+        }
     }
 
     // MARK: - Fixed Transport Bar (always visible at bottom)
@@ -325,6 +338,17 @@ struct PlayerView: View {
 
     private var sourcesSummary: String {
         soundSourceSummary(viewModel.activeSources)
+    }
+
+    /// Suggested preset name based on the active mix — keeps the save sheet
+    /// from looking empty so the focus delay doesn't feel like a dead field.
+    private var defaultPresetName: String {
+        let names = viewModel.activeSources.map(\.displayName)
+        switch names.count {
+        case 0: return "My Mix"
+        case 1, 2: return names.joined(separator: " + ")
+        default: return "\(names[0]) + \(names.count - 1) more"
+        }
     }
 
     private var activePalette: [Color] {
@@ -412,7 +436,7 @@ private struct SavePresetSheet: View {
                             .sensoryFeedback(.selection, trigger: icon)
                         }
                         .padding(20)
-                        .hushPanel(fill: HushPalette.surface.opacity(0.92))
+                        .hushPanel(fill: HushPalette.panelFillSoft)
                     }
                     .padding(.horizontal, 20)
                     .padding(.top, 16)
@@ -434,14 +458,10 @@ private struct SavePresetSheet: View {
                         .disabled(name.isEmpty)
                 }
             }
-            .task {
-                // Delay focus until the sheet finishes presenting. Focusing
-                // during the presentation animation forces UIKit to snapshot
-                // the keyboard before it's in a visible window, spiking the
-                // main thread and starving the audio render path.
-                try? await Task.sleep(for: .milliseconds(450))
-                nameFieldFocused = true
-            }
+            // .defaultFocus lets SwiftUI time keyboard appearance against the
+            // sheet presentation — avoids the mid-animation snapshot spike
+            // that used to starve the audio render thread.
+            .defaultFocus($nameFieldFocused, true)
         }
         .tint(HushPalette.accentSoft)
     }

@@ -13,6 +13,7 @@ struct SettingsView: View {
     @State private var headphonesConnected = AudioEngine.headphonesConnected
     @State private var showCredits = false
     @State private var showResetConfirmation = false
+    @State private var isResetting = false
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
@@ -137,6 +138,7 @@ struct SettingsView: View {
                         Button("Reset App", role: .destructive) {
                             showResetConfirmation = true
                         }
+                        .disabled(isResetting)
                     } footer: {
                         Text("Deletes all saved presets and preferences, then closes the app.")
                     }
@@ -145,6 +147,10 @@ struct SettingsView: View {
                 .listStyle(.insetGrouped)
                 .foregroundStyle(HushPalette.textPrimary)
                 .tint(HushPalette.accentSoft)
+
+                if isResetting {
+                    resetOverlay
+                }
             }
             .onReceive(NotificationCenter.default.publisher(for: AVAudioSession.routeChangeNotification)) { _ in
                 headphonesConnected = viewModel.headphonesConnected
@@ -171,7 +177,33 @@ struct SettingsView: View {
         }
     }
 
+    private var resetOverlay: some View {
+        ZStack {
+            Color.black.opacity(0.55)
+                .ignoresSafeArea()
+
+            VStack(spacing: 14) {
+                ProgressView()
+                    .progressViewStyle(.circular)
+                    .tint(HushPalette.accent)
+                    .controlSize(.large)
+
+                Text("Resetting Hush…")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(HushPalette.textPrimary)
+            }
+            .padding(.horizontal, 28)
+            .padding(.vertical, 22)
+            .hushPanel(radius: 20)
+        }
+        .transition(.opacity)
+    }
+
     private func resetApp() {
+        withAnimation(.easeInOut(duration: 0.2)) {
+            isResetting = true
+        }
+
         // Stop playback
         viewModel.stop()
         viewModel.stopTimer()
@@ -190,8 +222,9 @@ struct SettingsView: View {
             UserDefaults.standard.removePersistentDomain(forName: bundleID)
         }
 
-        // Close the app after a brief delay so the data wipe completes
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+        // Close the app after a brief delay so the overlay is visible and
+        // the data wipe completes.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
             exit(0)
         }
     }

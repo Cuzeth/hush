@@ -18,9 +18,9 @@ struct PresetSelector: View {
 
     @Environment(\.modelContext) private var modelContext
 
-    @State private var editingPreset: EditTarget?
-    @State private var editName = ""
+    @State private var renameTarget: RenameTarget?
     @State private var presetToEdit: Preset?
+    @Namespace private var presetSelection
 
     @AppStorage("hiddenBuiltInPresets") private var hiddenBuiltInData = Data()
     @AppStorage("renamedBuiltInPresets") private var renamedBuiltInData = Data()
@@ -106,11 +106,10 @@ struct PresetSelector: View {
                         Label("Edit Sounds", systemImage: "slider.horizontal.3")
                     }
                     Button {
-                        editName = preset.name
                         if let saved {
-                            editingPreset = .saved(saved)
+                            renameTarget = .saved(savedID: saved.stableID, currentName: saved.name)
                         } else {
-                            editingPreset = .builtIn(preset)
+                            renameTarget = .builtIn(preset: preset, currentName: preset.name)
                         }
                     } label: {
                         Label("Rename", systemImage: "pencil")
@@ -128,26 +127,13 @@ struct PresetSelector: View {
                 }
             }
         }
-        .alert("Rename Preset", isPresented: Binding(
-            get: { editingPreset != nil },
-            set: { if !$0 { editingPreset = nil } }
-        )) {
-            TextField("Name", text: $editName)
-            Button("Save") {
-                guard !editName.isEmpty else { editingPreset = nil; return }
-                switch editingPreset {
-                case .builtIn(let preset):
-                    renameBuiltIn(preset, to: editName)
-                case .saved(let saved):
-                    saved.name = editName
-                case .none:
-                    break
-                }
-                editingPreset = nil
+        .sheet(item: $renameTarget) { target in
+            RenamePresetSheet(initialName: target.currentName) { newName in
+                applyRename(target: target, name: newName)
+                renameTarget = nil
             }
-            Button("Cancel", role: .cancel) {
-                editingPreset = nil
-            }
+            .presentationDetents([.height(220)])
+            .presentationDragIndicator(.hidden)
         }
         .sheet(item: $presetToEdit) { preset in
             EditPresetSheet(preset: preset) { preset, newSources in
@@ -159,6 +145,17 @@ struct PresetSelector: View {
             }
             .presentationDetents([.large])
             .presentationDragIndicator(.visible)
+        }
+    }
+
+    private func applyRename(target: RenameTarget, name: String) {
+        switch target {
+        case .builtIn(let preset, _):
+            renameBuiltIn(preset, to: name)
+        case .saved(let savedID, _):
+            if let saved = savedByID[savedID] {
+                saved.name = name
+            }
         }
     }
 
@@ -234,14 +231,29 @@ struct PresetSelector: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 13)
-        .background(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(isSelected ? HushPalette.surfaceRaised.opacity(0.7) : HushPalette.surface.opacity(0.6))
-                .overlay(
+        .background {
+            ZStack {
+                // Base fill — present on every row.
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(HushPalette.surface.opacity(0.6))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .strokeBorder(HushPalette.outline, lineWidth: 1)
+                    )
+
+                // Selection highlight — slides between rows via
+                // matchedGeometryEffect when the user picks a new scene.
+                if isSelected {
                     RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .strokeBorder(isSelected ? HushPalette.outlineStrong : HushPalette.outline, lineWidth: 1)
-                )
-        )
+                        .fill(HushPalette.surfaceRaised.opacity(0.7))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                .strokeBorder(HushPalette.outlineStrong, lineWidth: 1)
+                        )
+                        .matchedGeometryEffect(id: "presetHighlight", in: presetSelection)
+                }
+            }
+        }
     }
 
     private func presetSummary(_ preset: Preset) -> String {
@@ -249,7 +261,102 @@ struct PresetSelector: View {
     }
 }
 
-private enum EditTarget {
-    case builtIn(Preset)
-    case saved(SavedPreset)
+private enum RenameTarget: Identifiable {
+    case builtIn(preset: Preset, currentName: String)
+    case saved(savedID: UUID, currentName: String)
+
+    var id: UUID {
+        switch self {
+        case .builtIn(let preset, _): return preset.id
+        case .saved(let savedID, _): return savedID
+        }
+    }
+
+    var currentName: String {
+        switch self {
+        case .builtIn(_, let name): return name
+        case .saved(_, let name): return name
+        }
+    }
+}
+
+private struct RenamePresetSheet: View {
+    let initialName: String
+    let onSave: (String) -> Void
+
+    @State private var name: String
+    @FocusState private var fieldFocused: Bool
+    @Environment(\.dismiss) private var dismiss
+
+    init(initialName: String, onSave: @escaping (String) -> Void) {
+        self.initialName = initialName
+        self.onSave = onSave
+        _name = State(initialValue: initialName)
+    }
+
+    private var trimmedName: String {
+        name.trimmingCharacters(in: .whitespaces)
+    }
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                HushBackdrop()
+
+                VStack(alignment: .leading, spacing: 14) {
+                    Text("Name")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(HushPalette.textSecondary)
+                        .textCase(.uppercase)
+
+                    TextField("Preset name", text: $name)
+                        .font(.title3.weight(.semibold))
+                        .foregroundStyle(HushPalette.textPrimary)
+                        .textFieldStyle(.plain)
+                        .submitLabel(.done)
+                        .focused($fieldFocused)
+                        .onSubmit(save)
+                        .padding(.vertical, 14)
+                        .padding(.horizontal, 16)
+                        .background(
+                            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                .fill(HushPalette.raisedFill)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                        .strokeBorder(
+                                            fieldFocused ? HushPalette.accentSoft : HushPalette.outline,
+                                            lineWidth: 1
+                                        )
+                                        .animation(.easeInOut(duration: 0.15), value: fieldFocused)
+                                )
+                        )
+
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 20)
+                .padding(.top, 20)
+            }
+            .navigationTitle("Rename")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                        .foregroundStyle(HushPalette.textSecondary)
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save", action: save)
+                        .fontWeight(.semibold)
+                        .foregroundStyle(trimmedName.isEmpty ? HushPalette.textMuted : HushPalette.accentSoft)
+                        .disabled(trimmedName.isEmpty)
+                }
+            }
+            .defaultFocus($fieldFocused, true)
+        }
+        .tint(HushPalette.accentSoft)
+    }
+
+    private func save() {
+        guard !trimmedName.isEmpty else { return }
+        onSave(trimmedName)
+    }
 }
