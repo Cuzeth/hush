@@ -1768,19 +1768,38 @@ private struct TestEnv {
 
     /// Writes a short sine-wave WAV to the temp dir so import can probe it
     /// with `AVAudioFile`. Avoids bundling fixtures.
-    func makeAudioFixture(name: String, durationSeconds: Double) throws -> URL {
+    ///
+    /// Frequency is derived from `name` so that two fixtures with different
+    /// names produce different audio data — required because importSound
+    /// rejects duplicates by content hash. `channels: 2` sidesteps the
+    /// mono→stereo conversion path inside SampleLoopPlayer (which loses a
+    /// small fixed number of trailing frames) for tests that need frame
+    /// counts to match exactly.
+    func makeAudioFixture(
+        name: String,
+        durationSeconds: Double,
+        channels: AVAudioChannelCount = 1
+    ) throws -> URL {
         let url = tempDir.appendingPathComponent("\(name).wav")
         let sampleRate: Double = 44100
         let frameCount = AVAudioFrameCount(sampleRate * durationSeconds)
-        guard let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1),
+        guard let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: channels),
               let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount) else {
             throw CocoaError(.fileWriteUnknown)
         }
         buffer.frameLength = frameCount
-        if let ch = buffer.floatChannelData?[0] {
-            let twoPiF = 2 * Float.pi * 440 / Float(sampleRate)
+
+        // Stable per-name frequency so different fixtures hash differently
+        // but the SAME name produces the SAME data (deterministic dedupe tests).
+        let nameSeed = name.unicodeScalars.reduce(0) { $0 &+ Int($1.value) }
+        let freq = Float(220 + (abs(nameSeed) % 440))
+        let twoPiF = 2 * Float.pi * freq / Float(sampleRate)
+        for ch in 0..<Int(channels) {
+            guard let dst = buffer.floatChannelData?[ch] else { continue }
+            // Slight per-channel phase shift so stereo isn't pure mono-doubled.
+            let phase = Float(ch) * Float.pi / 4
             for i in 0..<Int(frameCount) {
-                ch[i] = sinf(twoPiF * Float(i)) * 0.2
+                dst[i] = sinf(twoPiF * Float(i) + phase) * 0.2
             }
         }
 
@@ -2248,8 +2267,15 @@ struct SavedPresetMissingAssetTests {
         #expect(restored.first?.assetID == asset.assetID)
         let record = env.library.assetsByID[asset.id]
         #expect(record?.isMissing == true)
-        #expect(env.library.asset(withID: asset.assetID) == nil,
-                "Missing file should make registry lookup return nil so the engine surfaces missing")
+
+        // Library lookup still returns the asset (the record exists, just
+        // with isMissing=true) — but its `resolvedURL` is nil because the
+        // backing file is gone, which is what the engine checks to surface
+        // the missing banner.
+        let lookedUp = env.library.asset(withID: asset.assetID)
+        #expect(lookedUp != nil, "Asset record persists across a missing file")
+        #expect(lookedUp?.resolvedURL == nil,
+                "Missing file should make resolvedURL return nil so the engine surfaces missing")
     }
 }
 
@@ -2266,8 +2292,11 @@ struct SampleLoopPlayerCrossfadeBoundaryTests {
     /// the player should fall back to the unmodified buffer (no trim).
     @Test func crossfadeFallsBackWhenSourceIsTooShortForRequestedFade() throws {
         let env = try TestEnv.make()
-        // 0.6 s fixture: 0.6 * 44100 = 26460 frames.
-        let url = try env.makeAudioFixture(name: "boundary", durationSeconds: 0.6)
+        // 0.6 s STEREO fixture: 0.6 * 44100 = 26460 frames. Stereo matches
+        // SampleLoopPlayer's target format so the converter doesn't drop a
+        // few hundred frames upmixing — frame counts stay exact for the
+        // boundary check below.
+        let url = try env.makeAudioFixture(name: "boundary", durationSeconds: 0.6, channels: 2)
         let asset = SoundAsset(
             id: "user.boundary",
             displayName: "Boundary",
@@ -2277,7 +2306,7 @@ struct SampleLoopPlayerCrossfadeBoundaryTests {
             subdirectory: "",
             license: .userImported,
             crossfadeStyle: .rhythmic,
-            isMono: true,
+            isMono: false,
             absolutePath: url.path,
             crossfadeOverrideMs: 300
         )
@@ -2287,6 +2316,7 @@ struct SampleLoopPlayerCrossfadeBoundaryTests {
 
         #expect(player.isLoaded)
         // With N <= C * 2 the loop buffer keeps the full length unchanged.
+        // N = 26460, C = 13230, C * 2 = 26460 → fallback fires.
         let frames = Int(player.loopBuffer?.frameLength ?? 0)
         #expect(frames > 26000 && frames < 26800,
                 "Expected unmodified buffer length when N <= C * 2 (got \(frames))")
@@ -2294,7 +2324,7 @@ struct SampleLoopPlayerCrossfadeBoundaryTests {
 
     @Test func crossfadeAppliedWhenSourceIsLongEnough() throws {
         let env = try TestEnv.make()
-        let url = try env.makeAudioFixture(name: "long", durationSeconds: 3.0)
+        let url = try env.makeAudioFixture(name: "long", durationSeconds: 3.0, channels: 2)
         let asset = SoundAsset(
             id: "user.long",
             displayName: "Long",
@@ -2304,7 +2334,7 @@ struct SampleLoopPlayerCrossfadeBoundaryTests {
             subdirectory: "",
             license: .userImported,
             crossfadeStyle: .rhythmic,
-            isMono: true,
+            isMono: false,
             absolutePath: url.path,
             crossfadeOverrideMs: 300
         )
@@ -2314,7 +2344,7 @@ struct SampleLoopPlayerCrossfadeBoundaryTests {
 
         #expect(player.isLoaded)
         // Crossfade trims C samples (300ms ≈ 13230 frames at 44.1k) off the
-        // tail. 3 s ≈ 132300 - 13230 ≈ 119070 frames.
+        // tail. 3 s = 132300 - 13230 = 119070 frames.
         let frames = Int(player.loopBuffer?.frameLength ?? 0)
         #expect(frames > 117000 && frames < 121000,
                 "Expected loop buffer trimmed by crossfade length (got \(frames))")
@@ -2331,6 +2361,7 @@ struct ImportCategoryGuessTests {
     /// production logic changes, update this in lockstep.
     private func guessCategory(from filename: String) -> SoundCategory {
         let lower = filename.lowercased()
+        let words = lower.components(separatedBy: CharacterSet.alphanumerics.inverted)
         let keywords: [(String, SoundCategory)] = [
             ("rain", .rain),
             ("thunder", .thunder), ("storm", .thunder),
@@ -2343,7 +2374,7 @@ struct ImportCategoryGuessTests {
             ("train", .transport), ("plane", .transport), ("airplane", .transport),
         ]
         for (token, category) in keywords {
-            if lower.contains(token) { return category }
+            if words.contains(where: { $0.hasPrefix(token) }) { return category }
         }
         for category in SoundCategory.allCases {
             if lower.contains(category.rawValue.lowercased()) { return category }

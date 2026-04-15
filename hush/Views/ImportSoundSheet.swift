@@ -410,9 +410,13 @@ struct ImportSoundSheet: View {
 
     private func guessCategory(from filename: String) -> SoundCategory {
         let lower = filename.lowercased()
-        // Keyword map first — short tokens match the way users actually name
-        // files ("ocean.mp3", not "ocean & waves.mp3"). Order matters where
-        // tokens overlap (e.g. "campfire" before "fire").
+        // Match keywords against word *prefixes* (split on non-alphanumerics)
+        // rather than naive substrings — otherwise "train-passing.mp3" would
+        // match "rain" inside "train" before we ever check "train". Order
+        // still matters where one keyword is a prefix of another at the word
+        // level (e.g. "campfire" before "fire"). Plurals work via hasPrefix:
+        // "birds".hasPrefix("bird") == true.
+        let words = lower.components(separatedBy: CharacterSet.alphanumerics.inverted)
         let keywords: [(String, SoundCategory)] = [
             ("rain", .rain),
             ("thunder", .thunder), ("storm", .thunder),
@@ -425,10 +429,10 @@ struct ImportSoundSheet: View {
             ("train", .transport), ("plane", .transport), ("airplane", .transport),
         ]
         for (token, category) in keywords {
-            if lower.contains(token) { return category }
+            if words.contains(where: { $0.hasPrefix(token) }) { return category }
         }
-        // Fallback — full rawValue match (handles longer names like
-        // "Coffee Shop & Cafe" matching "Cafe").
+        // Fallback — full rawValue substring match (handles longer names
+        // where the category label appears verbatim in the filename).
         for category in SoundCategory.allCases {
             if lower.contains(category.rawValue.lowercased()) { return category }
         }
