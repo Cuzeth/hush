@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 extension SoundSource {
     var subtitle: String {
@@ -92,14 +93,26 @@ struct MixerView: View {
 private struct SourceRow: View {
     let source: SoundSource
     let viewModel: PlayerViewModel
+    @Environment(UserSoundLibrary.self) private var library
     @State private var volume: Float
     @State private var maskingStrength: Float
+    @State private var pendingRelinkURL: URL?
+    @State private var showRelinkPicker = false
 
     init(source: SoundSource, viewModel: PlayerViewModel) {
         self.source = source
         self.viewModel = viewModel
         _volume = State(initialValue: source.volume)
         _maskingStrength = State(initialValue: source.maskingStrength ?? 0.5)
+    }
+
+    /// The backing user asset, if any, and whether its file is missing.
+    private var missingUserAsset: UserSoundAsset? {
+        guard let id = source.assetID,
+              let uuid = UserSoundAsset.uuid(fromAssetID: id),
+              let record = library.assetsByID[uuid],
+              record.isMissing else { return nil }
+        return record
     }
 
     var body: some View {
@@ -112,7 +125,7 @@ private struct SourceRow: View {
 
                     Image(systemName: source.displayIcon)
                         .font(.headline)
-                        .foregroundStyle(HushPalette.textPrimary)
+                        .foregroundStyle(missingUserAsset != nil ? HushPalette.danger : HushPalette.textPrimary)
                 }
 
                 VStack(alignment: .leading, spacing: 4) {
@@ -120,9 +133,24 @@ private struct SourceRow: View {
                         .font(.headline)
                         .foregroundStyle(HushPalette.textPrimary)
 
-                    Text(source.subtitle)
-                        .font(.caption)
-                        .foregroundStyle(HushPalette.textSecondary)
+                    if let missing = missingUserAsset {
+                        Button {
+                            showRelinkPicker = true
+                        } label: {
+                            HStack(spacing: 4) {
+                                Image(systemName: "exclamationmark.triangle.fill")
+                                Text("Missing — tap to relink")
+                            }
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(HushPalette.danger)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Relink \(missing.displayName)")
+                    } else {
+                        Text(source.subtitle)
+                            .font(.caption)
+                            .foregroundStyle(HushPalette.textSecondary)
+                    }
                 }
 
                 Spacer()
@@ -171,6 +199,27 @@ private struct SourceRow: View {
         }
         .padding(18)
         .hushPanel(radius: 26)
+        .fileImporter(
+            isPresented: $showRelinkPicker,
+            allowedContentTypes: [.audio],
+            allowsMultipleSelection: false
+        ) { result in
+            guard case .success(let urls) = result, let url = urls.first,
+                  let asset = missingUserAsset else { return }
+            let scoped = url.startAccessingSecurityScopedResource()
+            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+            try? library.relink(asset, to: url)
+            // Re-add the source so the engine picks up the new file. Carry
+            // the user's volume across so the relink doesn't kick the level.
+            let prevVolume = source.volume
+            viewModel.removeSource(source)
+            if let resolved = library.asset(withID: asset.assetID) {
+                viewModel.addAsset(resolved)
+                if let added = viewModel.activeSources.last {
+                    viewModel.updateVolume(for: added, volume: prevVolume)
+                }
+            }
+        }
     }
 
     private var isToneType: Bool {
@@ -189,7 +238,11 @@ struct SoundPickerGrid: View {
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.horizontalSizeClass) private var sizeClass
+    @Environment(UserSoundLibrary.self) private var library
     @State private var expandedCategories: Set<SoundCategory> = []
+    @State private var showFileImporter = false
+    @State private var pendingImportURL: URL?
+    @State private var importerError: String?
 
     private var columns: [GridItem] {
         let count = sizeClass == .regular ? 3 : 2
@@ -208,11 +261,16 @@ struct SoundPickerGrid: View {
         SoundType.allCases.filter { $0.isGenerated && $0 != .sampleAsset && !activeGeneratedTypes.contains($0) }
     }
 
-    /// Categories that have at least one non-active asset
+    /// Categories that have at least one non-active asset (bundled only —
+    /// user imports are surfaced in their own section so they're easy to find).
     private var categoriesWithAssets: [SoundCategory] {
         SoundCategory.allCases.filter { cat in
-            SoundAssetRegistry.assets(for: cat).contains { !activeAssetIDs.contains($0.id) }
+            SoundAssetRegistry.bundled.contains { $0.category == cat && !activeAssetIDs.contains($0.id) }
         }
+    }
+
+    private var availableUserAssets: [SoundAsset] {
+        library.allSoundAssets.filter { !activeAssetIDs.contains($0.id) }
     }
 
     var body: some View {
@@ -222,6 +280,8 @@ struct SoundPickerGrid: View {
 
                 ScrollView(showsIndicators: false) {
                     VStack(alignment: .leading, spacing: 24) {
+                        mySoundsSection
+
                         // Generated section
                         soundSection(
                             title: "Generated",
@@ -238,6 +298,20 @@ struct SoundPickerGrid: View {
                     .padding(.top, 16)
                     .padding(.bottom, 28)
                 }
+
+                if let importerError {
+                    VStack {
+                        Spacer()
+                        Text(importerError)
+                            .font(.caption)
+                            .foregroundStyle(HushPalette.danger)
+                            .padding(12)
+                            .hushPanel(radius: 14)
+                            .padding(.horizontal, 20)
+                            .padding(.bottom, 24)
+                    }
+                    .transition(.opacity)
+                }
             }
             .navigationTitle("Add Sound")
             .navigationBarTitleDisplayMode(.inline)
@@ -247,13 +321,130 @@ struct SoundPickerGrid: View {
                         .foregroundStyle(HushPalette.textPrimary)
                 }
             }
+            .fileImporter(
+                isPresented: $showFileImporter,
+                allowedContentTypes: [.audio],
+                allowsMultipleSelection: false
+            ) { result in
+                switch result {
+                case .success(let urls):
+                    if let first = urls.first { pendingImportURL = first }
+                case .failure(let error):
+                    flashError(error.localizedDescription)
+                }
+            }
+            .sheet(item: $pendingImportURL) { url in
+                ImportSoundSheet(mode: .newImport(sourceURL: url), library: library) { newAsset in
+                    // Auto-add the freshly imported sound and dismiss the
+                    // picker — user shouldn't have to find it in the list.
+                    if let resolved = library.asset(withID: newAsset.assetID) {
+                        onSelectAsset(resolved)
+                        dismiss()
+                    }
+                }
+            }
         }
         .tint(HushPalette.accentSoft)
     }
 
+    // MARK: - My Sounds (user imports)
+
+    @ViewBuilder private var mySoundsSection: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("My Sounds")
+                    .font(.system(.title2, design: .serif, weight: .semibold))
+                    .foregroundStyle(HushPalette.textPrimary)
+
+                Text("Audio you've imported from your device")
+                    .font(.subheadline)
+                    .foregroundStyle(HushPalette.textSecondary)
+            }
+
+            LazyVGrid(columns: columns, spacing: 14) {
+                Button {
+                    showFileImporter = true
+                } label: {
+                    VStack(alignment: .leading, spacing: 14) {
+                        ZStack {
+                            Circle()
+                                .strokeBorder(HushPalette.outline, style: StrokeStyle(lineWidth: 1, dash: [4, 4]))
+                                .frame(width: 42, height: 42)
+                            Image(systemName: "plus")
+                                .font(.headline.weight(.bold))
+                                .foregroundStyle(HushPalette.accentSoft)
+                        }
+                        Text("Import sound")
+                            .font(.headline)
+                            .foregroundStyle(HushPalette.textPrimary)
+                            .multilineTextAlignment(.leading)
+                        Text("Pick a file from your device")
+                            .font(.caption)
+                            .foregroundStyle(HushPalette.textSecondary)
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 142, alignment: .leading)
+                    .padding(16)
+                    .background(
+                        RoundedRectangle(cornerRadius: 26, style: .continuous)
+                            .fill(HushPalette.panelFillSoft)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 26, style: .continuous)
+                                    .strokeBorder(HushPalette.outline, style: StrokeStyle(lineWidth: 1, dash: [6, 6]))
+                            )
+                    )
+                }
+                .buttonStyle(HushPressButtonStyle())
+
+                ForEach(availableUserAssets) { asset in
+                    Button {
+                        onSelectAsset(asset)
+                        dismiss()
+                    } label: {
+                        VStack(alignment: .leading, spacing: 14) {
+                            ZStack {
+                                Circle()
+                                    .fill(HushPalette.raisedFill)
+                                    .frame(width: 42, height: 42)
+                                Image(systemName: asset.icon)
+                                    .font(.headline)
+                                    .foregroundStyle(HushPalette.textPrimary)
+                            }
+                            Text(asset.displayName)
+                                .font(.headline)
+                                .foregroundStyle(HushPalette.textPrimary)
+                                .multilineTextAlignment(.leading)
+                                .lineLimit(2)
+                            Text("Imported")
+                                .font(.caption)
+                                .foregroundStyle(HushPalette.textSecondary)
+                        }
+                        .frame(maxWidth: .infinity, minHeight: 142, alignment: .leading)
+                        .padding(16)
+                        .hushPanel(radius: 26)
+                    }
+                    .buttonStyle(HushPressButtonStyle())
+                }
+            }
+        }
+    }
+
+    private func flashError(_ message: String) {
+        withAnimation(.easeInOut(duration: 0.2)) {
+            importerError = message
+        }
+        Task {
+            try? await Task.sleep(for: .seconds(3))
+            withAnimation(.easeInOut(duration: 0.2)) { importerError = nil }
+        }
+    }
+
     @ViewBuilder
     private func categorySection(_ category: SoundCategory) -> some View {
-        let assets = SoundAssetRegistry.assets(for: category).filter { !activeAssetIDs.contains($0.id) }
+        // Bundled-only here — user imports live in the My Sounds section so
+        // they don't get scattered across categories.
+        let assets = SoundAssetRegistry.bundled.filter {
+            $0.category == category && !activeAssetIDs.contains($0.id)
+        }
         let isExpanded = expandedCategories.contains(category)
 
         VStack(alignment: .leading, spacing: 14) {

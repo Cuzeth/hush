@@ -17,6 +17,7 @@ struct SettingsView: View {
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
+    @Environment(UserSoundLibrary.self) private var userSoundLibrary
 
     var body: some View {
         NavigationStack {
@@ -60,6 +61,8 @@ struct SettingsView: View {
                         }
                         .foregroundStyle(HushPalette.accentSoft)
                     }
+
+                    importedSoundsSection
 
                     Section("Tones") {
                         VStack(alignment: .leading) {
@@ -177,6 +180,33 @@ struct SettingsView: View {
         }
     }
 
+    @ViewBuilder private var importedSoundsSection: some View {
+        Section {
+            NavigationLink {
+                UserSoundManagementView()
+            } label: {
+                HStack {
+                    Text("Imported Sounds")
+                    Spacer()
+                    let count = userSoundLibrary.assetsByID.count
+                    let mb = Double(userSoundLibrary.totalDiskUsage) / 1_000_000
+                    Text(count == 0 ? "None" : "\(count) · \(String(format: "%.1f MB", mb))")
+                        .foregroundStyle(HushPalette.textSecondary)
+                        .monospacedDigit()
+                }
+            }
+        } header: {
+            Text("Library")
+        } footer: {
+            if userSoundLibrary.totalDiskUsage > 200_000_000 {
+                Text("Your imported sounds are over 200 MB. They're included in device backups.")
+                    .foregroundStyle(HushPalette.danger)
+            } else {
+                Text("Audio you've imported lives on this device only — not synced across iCloud.")
+            }
+        }
+    }
+
     private var resetOverlay: some View {
         ZStack {
             Color.black.opacity(0.55)
@@ -208,14 +238,20 @@ struct SettingsView: View {
         viewModel.stop()
         viewModel.stopTimer()
 
-        // Delete all saved presets
-        let descriptor = FetchDescriptor<SavedPreset>()
-        if let savedPresets = try? modelContext.fetch(descriptor) {
-            for preset in savedPresets {
-                modelContext.delete(preset)
-            }
-            try? modelContext.save()
+        // Delete all saved presets and imported sound records
+        let presetDescriptor = FetchDescriptor<SavedPreset>()
+        if let savedPresets = try? modelContext.fetch(presetDescriptor) {
+            for preset in savedPresets { modelContext.delete(preset) }
         }
+        let importDescriptor = FetchDescriptor<UserSoundAsset>()
+        if let imports = try? modelContext.fetch(importDescriptor) {
+            for asset in imports { modelContext.delete(asset) }
+        }
+        try? modelContext.save()
+
+        // Wipe the on-disk audio files so storage doesn't leak past the reset.
+        let userSoundsDir = UserSoundLibrary.defaultStorageDirectory()
+        try? FileManager.default.removeItem(at: userSoundsDir)
 
         // Nuke all UserDefaults for the app
         if let bundleID = Bundle.main.bundleIdentifier {
