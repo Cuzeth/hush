@@ -1,4 +1,5 @@
 @preconcurrency import AVFoundation
+import CryptoKit
 import Foundation
 import os.log
 import SwiftData
@@ -9,6 +10,9 @@ enum UserSoundImportError: LocalizedError, Equatable {
     case unreadable
     case unsupportedFormat
     case tooShort(seconds: Double)
+    case tooLong(seconds: Double, maxSeconds: Double)
+    case tooLarge(maxBytes: Int64)
+    case duplicate(existingDisplayName: String)
     case copyFailed
     case unknown
 
@@ -21,6 +25,15 @@ enum UserSoundImportError: LocalizedError, Equatable {
         case .tooShort(let seconds):
             let s = String(format: "%.1f", seconds)
             return "Sound is too short (\(s)s). Pick something at least 1 second long."
+        case .tooLong(let seconds, let maxSeconds):
+            let s = String(format: "%.1f", seconds)
+            let mins = Int(maxSeconds / 60)
+            return "Sound is too long (\(s)s). Pick something under \(mins) minutes."
+        case .tooLarge(let maxBytes):
+            let mb = Int(maxBytes / 1_000_000)
+            return "Sound is too large. Pick a file under \(mb) MB."
+        case .duplicate(let existing):
+            return "You've already imported this sound as \"\(existing)\"."
         case .copyFailed:
             return "Couldn't save the imported sound."
         case .unknown:
@@ -44,9 +57,23 @@ final class UserSoundLibrary {
     /// and will sound like a buzz.
     static let minimumDurationSeconds: Double = 1.0
 
+    /// Hard cap on a single import file (~50 MB). First-line guard against
+    /// pulling a huge file off disk before we even probe it. Doesn't catch
+    /// long compressed audio (a 50 MB MP3 decodes to ~1 GB of PCM) — that's
+    /// what `maximumDurationSeconds` is for. Overridable per-instance for tests.
+    static let defaultMaximumImportFileSizeBytes: Int64 = 50_000_000
+
+    /// Hard cap on imported sound duration (10 minutes). Decoded PCM scales
+    /// linearly with duration regardless of source format — a 50-minute MP3
+    /// expands to ~1 GB of Float32 stereo and would blow out the engine's
+    /// 200 MB buffer cache plus starve memory during load. Looping ambient
+    /// sounds rarely need more than a few minutes anyway.
+    static let maximumDurationSeconds: Double = 600.0
+
     /// Subdirectory under `Documents/` that holds all imported audio files.
     static let storageDirectoryName = "UserSounds"
 
+    let maximumImportFileSizeBytes: Int64
     private let modelContext: ModelContext
     private let storageDirectory: URL
 
@@ -55,9 +82,14 @@ final class UserSoundLibrary {
     /// how the registry will look things up.
     private(set) var assetsByID: [UUID: UserSoundAsset] = [:]
 
-    init(modelContext: ModelContext, storageDirectory: URL? = nil) {
+    init(
+        modelContext: ModelContext,
+        storageDirectory: URL? = nil,
+        maximumImportFileSizeBytes: Int64 = UserSoundLibrary.defaultMaximumImportFileSizeBytes
+    ) {
         self.modelContext = modelContext
         self.storageDirectory = storageDirectory ?? Self.defaultStorageDirectory()
+        self.maximumImportFileSizeBytes = maximumImportFileSizeBytes
         try? FileManager.default.createDirectory(at: self.storageDirectory, withIntermediateDirectories: true)
         refresh()
     }
@@ -117,24 +149,16 @@ final class UserSoundLibrary {
         crossfadeDurationMs: Int = 100,
         iconOverride: String? = nil
     ) throws -> UserSoundAsset {
-        // Decode probe — we want to fail fast with a friendly error rather
-        // than letting the engine encounter a broken file later.
-        let file: AVAudioFile
-        do {
-            file = try AVAudioFile(forReading: sourceURL)
-        } catch {
-            Self.logger.error("Import probe failed: \(error.localizedDescription)")
-            throw UserSoundImportError.unreadable
-        }
+        let probe = try validateAudioSource(at: sourceURL)
+        let format = probe.file.processingFormat
+        let duration = probe.duration
 
-        let format = file.processingFormat
-        let frameCount = Double(file.length)
-        let sampleRate = format.sampleRate
-        guard sampleRate > 0 else { throw UserSoundImportError.unsupportedFormat }
-
-        let duration = frameCount / sampleRate
-        guard duration >= Self.minimumDurationSeconds else {
-            throw UserSoundImportError.tooShort(seconds: duration)
+        // Hash the source so we can spot a re-import of the same file. Read
+        // up to 2 MB — enough to disambiguate audio files in practice without
+        // re-reading large WAVs into memory.
+        let hash = Self.hashFilePrefix(at: sourceURL)
+        if let hash, let existing = assetsByID.values.first(where: { $0.contentHash == hash }) {
+            throw UserSoundImportError.duplicate(existingDisplayName: existing.displayName)
         }
 
         // Copy into storage with a UUID-stable name, preserving extension.
@@ -167,12 +191,13 @@ final class UserSoundLibrary {
             category: category,
             fileName: fileName,
             durationSeconds: duration,
-            originalSampleRate: sampleRate,
+            originalSampleRate: format.sampleRate,
             channelCount: Int(format.channelCount),
             fileSizeBytes: size,
             crossfadeEnabled: crossfadeEnabled,
             crossfadeDurationMs: crossfadeDurationMs,
-            iconOverride: iconOverride
+            iconOverride: iconOverride,
+            contentHash: hash
         )
 
         modelContext.insert(record)
@@ -201,14 +226,11 @@ final class UserSoundLibrary {
 
     /// Re-binds an existing record to a new file (used when the original was
     /// deleted and the user wants to relink). Keeps the same `id` so saved
-    /// presets continue to resolve.
+    /// presets continue to resolve. Validates the new file the same way an
+    /// import would — relink isn't a back door around the size/duration caps.
     func relink(_ asset: UserSoundAsset, to sourceURL: URL) throws {
-        let file: AVAudioFile
-        do {
-            file = try AVAudioFile(forReading: sourceURL)
-        } catch {
-            throw UserSoundImportError.unreadable
-        }
+        let probe = try validateAudioSource(at: sourceURL)
+        let format = probe.file.processingFormat
 
         let ext = sourceURL.pathExtension.isEmpty ? "audio" : sourceURL.pathExtension
         let newFileName = "\(asset.id.uuidString).\(ext)"
@@ -226,16 +248,19 @@ final class UserSoundLibrary {
             throw UserSoundImportError.copyFailed
         }
 
-        let format = file.processingFormat
-        let duration = Double(file.length) / format.sampleRate
         let size = (try? FileManager.default.attributesOfItem(atPath: destination.path)[.size] as? Int64) ?? 0
 
         asset.fileName = newFileName
-        asset.durationSeconds = duration
+        asset.durationSeconds = probe.duration
         asset.originalSampleRate = format.sampleRate
         asset.channelCount = Int(format.channelCount)
         asset.fileSizeBytes = size
         asset.isMissing = false
+        // Refresh the dedupe hash to match the new file. Without this, a
+        // later import whose first 2 MB happens to match the OLD hash would
+        // be flagged as a duplicate of this asset, naming a file that no
+        // longer corresponds to its data.
+        asset.contentHash = Self.hashFilePrefix(at: sourceURL)
         try? modelContext.save()
         refresh()
     }
@@ -261,6 +286,54 @@ final class UserSoundLibrary {
     }
 
     // MARK: - Internals
+
+    /// Result of probing a source file — the live AVAudioFile (held only for
+    /// the caller's immediate use) and the duration we already computed.
+    private struct AudioProbe {
+        let file: AVAudioFile
+        let duration: Double
+    }
+
+    /// Shared size + format + duration validation for both `importSound` and
+    /// `relink`. Throws the user-facing error; the size check runs first so
+    /// we never parse a file we're going to reject anyway.
+    private func validateAudioSource(at sourceURL: URL) throws -> AudioProbe {
+        if let size = (try? FileManager.default.attributesOfItem(atPath: sourceURL.path)[.size] as? Int64),
+           size > maximumImportFileSizeBytes {
+            throw UserSoundImportError.tooLarge(maxBytes: maximumImportFileSizeBytes)
+        }
+
+        let file: AVAudioFile
+        do {
+            file = try AVAudioFile(forReading: sourceURL)
+        } catch {
+            Self.logger.error("Audio probe failed: \(error.localizedDescription)")
+            throw UserSoundImportError.unreadable
+        }
+
+        let format = file.processingFormat
+        guard format.sampleRate > 0 else { throw UserSoundImportError.unsupportedFormat }
+
+        let duration = Double(file.length) / format.sampleRate
+        guard duration >= Self.minimumDurationSeconds else {
+            throw UserSoundImportError.tooShort(seconds: duration)
+        }
+        guard duration <= Self.maximumDurationSeconds else {
+            throw UserSoundImportError.tooLong(seconds: duration, maxSeconds: Self.maximumDurationSeconds)
+        }
+        return AudioProbe(file: file, duration: duration)
+    }
+
+    /// SHA-256 of the first ~2 MB of the file at `url`. Returns nil if the
+    /// file can't be opened — in that case the caller skips dedupe and lets
+    /// the AVAudioFile probe surface the real error.
+    static func hashFilePrefix(at url: URL, byteLimit: Int = 2_000_000) -> String? {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { try? handle.close() }
+        guard let data = try? handle.read(upToCount: byteLimit) else { return nil }
+        let digest = SHA256.hash(data: data)
+        return digest.map { String(format: "%02x", $0) }.joined()
+    }
 
     private func refresh() {
         let descriptor = FetchDescriptor<UserSoundAsset>()

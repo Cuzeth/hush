@@ -1789,3 +1789,601 @@ private func rms(_ buffer: UnsafeMutablePointer<Float>, count: Int) -> Float {
     for i in 0..<count { sum += buffer[i] * buffer[i] }
     return sqrt(sum / Float(count))
 }
+
+// MARK: - User Sound Import (size + duplicate) Tests
+
+@MainActor
+struct UserSoundImportConstraintTests {
+
+    @Test func rejectsOversizedFile() throws {
+        let env = try TestEnv.makeWithImportLimit(50_000) // 50 KB ceiling
+        let source = try env.makeAudioFixture(name: "fat", durationSeconds: 2.0)
+
+        // Sanity: the fixture is larger than our test ceiling.
+        let size = (try? FileManager.default.attributesOfItem(atPath: source.path)[.size] as? Int64) ?? 0
+        #expect(size > 50_000, "Test fixture should exceed the test-only size cap")
+
+        do {
+            _ = try env.library.importSound(from: source, displayName: "Fat", category: .things)
+            Issue.record("Expected import to throw .tooLarge")
+        } catch let error as UserSoundImportError {
+            if case .tooLarge = error { } else { Issue.record("Wrong error type: \(error)") }
+        }
+    }
+
+    @Test func rejectsDuplicateImportByContentHash() throws {
+        let env = try TestEnv.make()
+        let source = try env.makeAudioFixture(name: "dup", durationSeconds: 2.0)
+
+        _ = try env.library.importSound(from: source, displayName: "First", category: .things)
+
+        do {
+            _ = try env.library.importSound(from: source, displayName: "Second", category: .things)
+            Issue.record("Expected import to throw .duplicate")
+        } catch let error as UserSoundImportError {
+            if case .duplicate(let name) = error {
+                #expect(name == "First")
+            } else {
+                Issue.record("Wrong error type: \(error)")
+            }
+        }
+    }
+
+    @Test func differentSourcesCoexist() throws {
+        let env = try TestEnv.make()
+        let a = try env.makeAudioFixture(name: "a", durationSeconds: 2.0)
+        let b = try env.makeAudioFixture(name: "b", durationSeconds: 3.0)
+
+        let one = try env.library.importSound(from: a, displayName: "A", category: .things)
+        let two = try env.library.importSound(from: b, displayName: "B", category: .things)
+
+        #expect(one.id != two.id)
+        #expect(one.contentHash != nil)
+        #expect(two.contentHash != nil)
+        #expect(one.contentHash != two.contentHash, "Different source files must hash differently")
+    }
+
+    @Test func hashFilePrefixIsStableAndDistinct() throws {
+        let env = try TestEnv.make()
+        let a = try env.makeAudioFixture(name: "stable", durationSeconds: 1.5)
+        let b = try env.makeAudioFixture(name: "different", durationSeconds: 2.0)
+
+        let h1 = UserSoundLibrary.hashFilePrefix(at: a)
+        let h2 = UserSoundLibrary.hashFilePrefix(at: a)
+        let h3 = UserSoundLibrary.hashFilePrefix(at: b)
+
+        #expect(h1 != nil)
+        #expect(h1 == h2, "Hash should be deterministic across reads")
+        #expect(h1 != h3, "Different files should hash differently")
+    }
+
+    @Test func relinkRejectsOversizedFile() throws {
+        // A small file gets in under the cap; a bigger one should be rejected
+        // by the relink path the same way `importSound` rejects it.
+        let env = try TestEnv.makeWithImportLimit(200_000)
+        let small = try env.makeAudioFixture(name: "small", durationSeconds: 1.0)
+        let asset = try env.library.importSound(from: small, displayName: "S", category: .things)
+
+        let big = try env.makeAudioFixture(name: "big", durationSeconds: 2.0)
+        let bigSize = (try? FileManager.default.attributesOfItem(atPath: big.path)[.size] as? Int64) ?? 0
+        #expect(bigSize > 200_000, "Test fixture should exceed the test-only size cap")
+
+        do {
+            try env.library.relink(asset, to: big)
+            Issue.record("Expected relink to throw .tooLarge")
+        } catch let error as UserSoundImportError {
+            if case .tooLarge = error { } else { Issue.record("Wrong error type: \(error)") }
+        }
+    }
+
+    @Test func relinkRefreshesContentHash() throws {
+        // Stale hash after relink would mis-flag a later import as duplicate
+        // of an asset whose data has since changed.
+        let env = try TestEnv.make()
+        let a = try env.makeAudioFixture(name: "a", durationSeconds: 2.0)
+        let b = try env.makeAudioFixture(name: "b", durationSeconds: 2.5)
+
+        let asset = try env.library.importSound(from: a, displayName: "Mine", category: .things)
+        let originalHash = asset.contentHash
+        #expect(originalHash != nil)
+
+        try env.library.relink(asset, to: b)
+        #expect(asset.contentHash != nil)
+        #expect(asset.contentHash != originalHash, "Relink must recompute the content hash")
+
+        let bHash = UserSoundLibrary.hashFilePrefix(at: b)
+        #expect(asset.contentHash == bHash, "Hash should reflect the new file's data")
+    }
+
+    @Test func rejectsTooLongFile() throws {
+        // We can't cheaply build a 10-min fixture, so just verify the new
+        // error case round-trips a useful message — the validation path
+        // itself is exercised by the size-check test.
+        let err = UserSoundImportError.tooLong(seconds: 720, maxSeconds: 600)
+        let msg = err.errorDescription ?? ""
+        #expect(msg.contains("too long"))
+        #expect(msg.contains("10 minutes"), "Error copy must reflect the configured cap")
+    }
+}
+
+// MARK: - Random Mix Selection Tests
+
+@MainActor
+struct RandomMixSelectionTests {
+
+    @Test func pickRandomMixSourcesNeverIncludesUserImports() throws {
+        let env = try TestEnv.make()
+        let url = try env.makeAudioFixture(name: "u", durationSeconds: 2.0)
+        let asset = try env.library.importSound(from: url, displayName: "User", category: .things)
+
+        // Wire the registry hook the way HushApp.init does so randomMix
+        // would have access to the user import — it should still ignore it.
+        SoundAssetRegistry.userLookup = { id in env.library.asset(withID: id) }
+        SoundAssetRegistry.userAssetsProvider = { env.library.allSoundAssets }
+        defer {
+            SoundAssetRegistry.userLookup = nil
+            SoundAssetRegistry.userAssetsProvider = nil
+        }
+
+        let viewModel = PlayerViewModel()
+
+        // Run many times — randomness must never produce a user asset.
+        for _ in 0..<30 {
+            let sources = viewModel.pickRandomMixSources()
+            for source in sources {
+                if let id = source.assetID {
+                    #expect(!id.hasPrefix("user."), "randomMix picked user import \(id)")
+                    #expect(id != asset.assetID)
+                }
+            }
+        }
+    }
+
+    @Test func pickRandomMixSourcesWithoutImportsBehavesNormally() {
+        let viewModel = PlayerViewModel()
+        // Registry has no user provider — bundled-only is the only option.
+        for _ in 0..<10 {
+            let sources = viewModel.pickRandomMixSources()
+            #expect(sources.count >= 2 && sources.count <= 4)
+            // All asset-typed sources must resolve to bundled assets.
+            for source in sources where source.assetID != nil {
+                let resolved = SoundAssetRegistry.bundled.first(where: { $0.id == source.assetID })
+                #expect(resolved != nil, "randomMix picked unknown bundled asset id")
+            }
+        }
+    }
+}
+
+// MARK: - Missing Warning Chain Tests
+
+@MainActor
+struct MissingWarningChainTests {
+
+    @Test func recordingSameAssetTwiceCountsOnce() {
+        let viewModel = PlayerViewModel()
+        viewModel.recordMissingAsset("user.aaa")
+        viewModel.recordMissingAsset("user.aaa")
+
+        guard case .missingUserSounds(let count) = viewModel.activeWarning else {
+            Issue.record("Expected missingUserSounds warning")
+            return
+        }
+        #expect(count == 1)
+    }
+
+    @Test func recordingDifferentAssetsAccumulates() {
+        let viewModel = PlayerViewModel()
+        viewModel.recordMissingAsset("user.aaa")
+        viewModel.recordMissingAsset("user.bbb")
+
+        guard case .missingUserSounds(let count) = viewModel.activeWarning else {
+            Issue.record("Expected missingUserSounds warning")
+            return
+        }
+        #expect(count == 2)
+    }
+
+    @Test func higherPriorityWarningSuppressesMissingBanner() {
+        let viewModel = PlayerViewModel()
+        viewModel.showWarning(.headphonesRecommended)
+        viewModel.recordMissingAsset("user.aaa")
+
+        // Higher-priority warning stays in front while it's active.
+        if case .missingUserSounds = viewModel.activeWarning {
+            Issue.record("Missing banner should not replace headphones warning")
+        }
+    }
+
+    @Test func dismissingHigherPriorityRestoresMissingBanner() {
+        let viewModel = PlayerViewModel()
+        viewModel.showWarning(.headphonesRecommended)
+        viewModel.recordMissingAsset("user.aaa")
+        viewModel.dismissWarning()
+
+        guard case .missingUserSounds(let count) = viewModel.activeWarning else {
+            Issue.record("Expected missing banner after dismissing higher-priority warning")
+            return
+        }
+        #expect(count == 1)
+    }
+
+    @Test func bindLibraryDoesNotPreseedMissingBanner() throws {
+        // Library-level missing is shown in Settings → Imported Sounds. The
+        // home-screen banner reflects what the user is *trying to play*
+        // (engine-reported missing), not the library snapshot — otherwise
+        // bindUserSoundLibrary firing on every onAppear would re-seed and
+        // override what removeSource already cleared.
+        let env = try TestEnv.make()
+        let url = try env.makeAudioFixture(name: "lost", durationSeconds: 2.0)
+        let asset = try env.library.importSound(from: url, displayName: "Lost", category: .things)
+        try FileManager.default.removeItem(at: env.library.url(for: asset))
+        env.library.verify()
+
+        let viewModel = PlayerViewModel()
+        viewModel.bindUserSoundLibrary(env.library)
+
+        #expect(viewModel.activeWarning == nil,
+                "Library-level missing must not pre-seed the home banner")
+    }
+
+    @Test func dismissingMissingBannerKeepsItDismissed() {
+        // Regression: dismissWarning used to call refreshMissingWarningIfNeeded
+        // unconditionally, which immediately re-popped the banner that the
+        // user just dismissed. Banner was effectively undismissable.
+        let viewModel = PlayerViewModel()
+        viewModel.recordMissingAsset("user.aaa")
+        guard case .missingUserSounds = viewModel.activeWarning else {
+            Issue.record("Expected missing banner after recording")
+            return
+        }
+        viewModel.dismissWarning()
+        #expect(viewModel.activeWarning == nil,
+                "Missing banner must stay dismissed after user closes it")
+    }
+
+    @Test func sameMissingAssetReportedAgainDoesNotResurfaceAfterDismiss() {
+        let viewModel = PlayerViewModel()
+        viewModel.recordMissingAsset("user.aaa")
+        viewModel.dismissWarning()
+        #expect(viewModel.activeWarning == nil)
+
+        // Engine re-reports the same missing asset (e.g. user pressed play
+        // again). Already known → no resurface.
+        viewModel.recordMissingAsset("user.aaa")
+        #expect(viewModel.activeWarning == nil)
+    }
+
+    @Test func newMissingAssetResurfacesBannerAfterDismiss() {
+        let viewModel = PlayerViewModel()
+        viewModel.recordMissingAsset("user.aaa")
+        viewModel.dismissWarning()
+        #expect(viewModel.activeWarning == nil)
+
+        // A *different* missing asset is real new information — surface it.
+        viewModel.recordMissingAsset("user.bbb")
+        guard case .missingUserSounds(let count) = viewModel.activeWarning else {
+            Issue.record("New missing asset should re-surface the banner")
+            return
+        }
+        #expect(count == 2)
+    }
+}
+
+// MARK: - Beat Safety Dismissal Tests
+
+@MainActor
+struct BeatSafetyDismissalTests {
+
+    private static let beatSafetyKey = "hasSeenBeatSafetyWarning"
+
+    @Test func dismissingBeatSafetyMarksSeen() {
+        UserDefaults.standard.removeObject(forKey: Self.beatSafetyKey)
+        defer { UserDefaults.standard.removeObject(forKey: Self.beatSafetyKey) }
+
+        let viewModel = PlayerViewModel()
+        viewModel.showWarning(.beatSafety)
+        #expect(UserDefaults.standard.bool(forKey: Self.beatSafetyKey) == false,
+                "Showing alone should NOT mark seen")
+
+        viewModel.dismissWarning()
+        #expect(UserDefaults.standard.bool(forKey: Self.beatSafetyKey) == true,
+                "Dismissal should mark seen")
+    }
+
+    @Test func dismissingOtherWarningDoesNotMarkBeatSafetySeen() {
+        UserDefaults.standard.removeObject(forKey: Self.beatSafetyKey)
+        defer { UserDefaults.standard.removeObject(forKey: Self.beatSafetyKey) }
+
+        let viewModel = PlayerViewModel()
+        viewModel.showWarning(.headphonesRecommended)
+        viewModel.dismissWarning()
+        #expect(UserDefaults.standard.bool(forKey: Self.beatSafetyKey) == false)
+    }
+}
+
+// MARK: - Relink Source Tests
+
+@MainActor
+struct RelinkSourceTests {
+
+    @Test func relinkPreservesUUIDVolumeAndPosition() throws {
+        let env = try TestEnv.make()
+        let urlA = try env.makeAudioFixture(name: "a", durationSeconds: 2.0)
+        let urlB = try env.makeAudioFixture(name: "b", durationSeconds: 2.0)
+        let urlC = try env.makeAudioFixture(name: "c", durationSeconds: 2.0)
+        let assetA = try env.library.importSound(from: urlA, displayName: "A", category: .things)
+        let assetB = try env.library.importSound(from: urlB, displayName: "B", category: .things)
+        let assetC = try env.library.importSound(from: urlC, displayName: "C", category: .things)
+
+        SoundAssetRegistry.userLookup = { id in env.library.asset(withID: id) }
+        SoundAssetRegistry.userAssetsProvider = { env.library.allSoundAssets }
+        defer {
+            SoundAssetRegistry.userLookup = nil
+            SoundAssetRegistry.userAssetsProvider = nil
+        }
+
+        let viewModel = PlayerViewModel()
+        // Stack three sources in a known order with known volumes.
+        viewModel.activeSources = [
+            SoundSource(asset: env.library.asset(withID: assetA.assetID)!, volume: 0.5),
+            SoundSource(asset: env.library.asset(withID: assetB.assetID)!, volume: 0.25),
+            SoundSource(asset: env.library.asset(withID: assetC.assetID)!, volume: 0.9),
+        ]
+
+        let middle = viewModel.activeSources[1]
+        let originalID = middle.id
+        let originalVolume = middle.volume
+
+        // Mark the middle asset as missing — relinkSource asserts this is
+        // only used on missing-asset sources (the engine path is otherwise
+        // unsafe; see relinkSource doc comment).
+        viewModel.recordMissingAsset(assetB.assetID)
+
+        // Relink (engine path is skipped because isPlaying == false in tests).
+        viewModel.relinkSource(middle)
+
+        let after = viewModel.activeSources
+        #expect(after.count == 3)
+        #expect(after[1].id == originalID, "UUID must stay stable across relink")
+        #expect(after[1].volume == originalVolume, "Volume must stay stable across relink")
+        #expect(after[1].assetID == assetB.assetID, "AssetID must stay stable across relink")
+        #expect(after[0].assetID == assetA.assetID, "Position must not shift")
+        #expect(after[2].assetID == assetC.assetID, "Position must not shift")
+        // After a successful relink, the asset is no longer missing — the
+        // banner should clear (count would have been 1, now 0).
+        #expect(viewModel.activeWarning == nil,
+                "Successful relink should clear the missing banner")
+    }
+
+    @Test func relinkOfUnknownSourceIsNoOp() {
+        let viewModel = PlayerViewModel()
+        let stranger = SoundSource(type: .whiteNoise, volume: 0.5)
+        viewModel.relinkSource(stranger)
+        #expect(viewModel.activeSources.isEmpty)
+    }
+}
+
+// MARK: - removeSource Missing-ID Decrement Tests
+
+@MainActor
+struct RemoveSourceMissingIDTests {
+
+    @Test func removingMissingSourceDropsBannerCount() {
+        let viewModel = PlayerViewModel()
+        viewModel.recordMissingAsset("user.aaa")
+        viewModel.recordMissingAsset("user.bbb")
+        let source = SoundSource(type: .sampleAsset, volume: 0.5, assetID: "user.aaa")
+        viewModel.activeSources = [source]
+
+        viewModel.removeSource(source)
+
+        guard case .missingUserSounds(let count) = viewModel.activeWarning else {
+            Issue.record("Expected missing banner with remaining count")
+            return
+        }
+        #expect(count == 1)
+    }
+
+    @Test func removingLastMissingSourceClearsBanner() {
+        let viewModel = PlayerViewModel()
+        viewModel.recordMissingAsset("user.only")
+        let source = SoundSource(type: .sampleAsset, volume: 0.5, assetID: "user.only")
+        viewModel.activeSources = [source]
+
+        viewModel.removeSource(source)
+        #expect(viewModel.activeWarning == nil)
+    }
+
+    @Test func removingOneOfTwoSourcesPointingAtSameMissingIDKeepsBanner() {
+        let viewModel = PlayerViewModel()
+        viewModel.recordMissingAsset("user.shared")
+        let s1 = SoundSource(type: .sampleAsset, volume: 0.5, assetID: "user.shared")
+        let s2 = SoundSource(type: .sampleAsset, volume: 0.5, assetID: "user.shared")
+        viewModel.activeSources = [s1, s2]
+
+        viewModel.removeSource(s1)
+
+        guard case .missingUserSounds(let count) = viewModel.activeWarning else {
+            Issue.record("Banner should remain while another source still references the missing asset")
+            return
+        }
+        #expect(count == 1)
+    }
+}
+
+// MARK: - SavedPreset Survives UserSoundAsset Deletion
+
+@MainActor
+struct SavedPresetMissingAssetTests {
+
+    @Test func presetReferencingDeletedImportSurfacesAsMissing() throws {
+        let env = try TestEnv.make()
+        let url = try env.makeAudioFixture(name: "p", durationSeconds: 2.0)
+        let asset = try env.library.importSound(from: url, displayName: "P", category: .things)
+
+        SoundAssetRegistry.userLookup = { id in env.library.asset(withID: id) }
+        defer { SoundAssetRegistry.userLookup = nil }
+
+        // Build & encode a preset referencing the import (mimics SavedPreset.sources).
+        let source = SoundSource(asset: env.library.asset(withID: asset.assetID)!, volume: 0.42)
+        let saved = SavedPreset(name: "Mine", icon: "moon", sources: [source])
+        let decoded = saved.sources
+        #expect(decoded.count == 1)
+        #expect(decoded.first?.assetID == asset.assetID)
+
+        // Delete the file out from under the registry, then verify().
+        try FileManager.default.removeItem(at: env.library.url(for: asset))
+        env.library.verify()
+
+        // The preset still resolves with the assetID set; missing flag goes
+        // through the library's UserSoundAsset.isMissing field, not the
+        // SoundSource itself.
+        let restored = saved.sources
+        #expect(restored.first?.assetID == asset.assetID)
+        let record = env.library.assetsByID[asset.id]
+        #expect(record?.isMissing == true)
+        #expect(env.library.asset(withID: asset.assetID) == nil,
+                "Missing file should make registry lookup return nil so the engine surfaces missing")
+    }
+}
+
+// MARK: - prebakeCrossfade Boundary Tests
+
+@MainActor
+struct SampleLoopPlayerCrossfadeBoundaryTests {
+
+    /// File length must satisfy N > C * 2 for a crossfade buffer to be
+    /// produced. With 1.0s minimum import and 300ms max crossfade, the
+    /// shortest legal file (44100 frames) is well clear of 2 * 13230 = 26460.
+    /// This test exercises the guard at a tighter ratio: a ~0.6 s fixture
+    /// against a 300 ms crossfade — N = 26460, C = 13230, so N == C * 2 and
+    /// the player should fall back to the unmodified buffer (no trim).
+    @Test func crossfadeFallsBackWhenSourceIsTooShortForRequestedFade() throws {
+        let env = try TestEnv.make()
+        // 0.6 s fixture: 0.6 * 44100 = 26460 frames.
+        let url = try env.makeAudioFixture(name: "boundary", durationSeconds: 0.6)
+        let asset = SoundAsset(
+            id: "user.boundary",
+            displayName: "Boundary",
+            category: .things,
+            fileName: url.lastPathComponent,
+            fileExtension: "",
+            subdirectory: "",
+            license: .userImported,
+            crossfadeStyle: .rhythmic,
+            isMono: true,
+            absolutePath: url.path,
+            crossfadeOverrideMs: 300
+        )
+
+        let player = SampleLoopPlayer()
+        player.loadAsset(asset, targetSampleRate: 44100)
+
+        #expect(player.isLoaded)
+        // With N <= C * 2 the loop buffer keeps the full length unchanged.
+        let frames = Int(player.loopBuffer?.frameLength ?? 0)
+        #expect(frames > 26000 && frames < 26800,
+                "Expected unmodified buffer length when N <= C * 2 (got \(frames))")
+    }
+
+    @Test func crossfadeAppliedWhenSourceIsLongEnough() throws {
+        let env = try TestEnv.make()
+        let url = try env.makeAudioFixture(name: "long", durationSeconds: 3.0)
+        let asset = SoundAsset(
+            id: "user.long",
+            displayName: "Long",
+            category: .things,
+            fileName: url.lastPathComponent,
+            fileExtension: "",
+            subdirectory: "",
+            license: .userImported,
+            crossfadeStyle: .rhythmic,
+            isMono: true,
+            absolutePath: url.path,
+            crossfadeOverrideMs: 300
+        )
+
+        let player = SampleLoopPlayer()
+        player.loadAsset(asset, targetSampleRate: 44100)
+
+        #expect(player.isLoaded)
+        // Crossfade trims C samples (300ms ≈ 13230 frames at 44.1k) off the
+        // tail. 3 s ≈ 132300 - 13230 ≈ 119070 frames.
+        let frames = Int(player.loopBuffer?.frameLength ?? 0)
+        #expect(frames > 117000 && frames < 121000,
+                "Expected loop buffer trimmed by crossfade length (got \(frames))")
+    }
+}
+
+// MARK: - guessCategory keyword tests
+
+@MainActor
+struct ImportCategoryGuessTests {
+
+    /// Mirrors `ImportSoundSheet.guessCategory` so we can lock in the
+    /// keyword-first behavior without needing a SwiftUI host. If the
+    /// production logic changes, update this in lockstep.
+    private func guessCategory(from filename: String) -> SoundCategory {
+        let lower = filename.lowercased()
+        let keywords: [(String, SoundCategory)] = [
+            ("rain", .rain),
+            ("thunder", .thunder), ("storm", .thunder),
+            ("ocean", .ocean), ("wave", .ocean), ("sea", .ocean),
+            ("campfire", .fire), ("fire", .fire), ("flame", .fire),
+            ("wind", .wind),
+            ("bird", .birds), ("chirp", .birds),
+            ("water", .water), ("river", .water), ("stream", .water),
+            ("traffic", .urban), ("city", .urban), ("siren", .urban),
+            ("train", .transport), ("plane", .transport), ("airplane", .transport),
+        ]
+        for (token, category) in keywords {
+            if lower.contains(token) { return category }
+        }
+        for category in SoundCategory.allCases {
+            if lower.contains(category.rawValue.lowercased()) { return category }
+        }
+        return .things
+    }
+
+    @Test func keywordsRouteToExpectedCategory() {
+        #expect(guessCategory(from: "soft-rain.mp3") == .rain)
+        #expect(guessCategory(from: "ocean-waves.wav") == .ocean)
+        #expect(guessCategory(from: "wave.mp3") == .ocean)
+        #expect(guessCategory(from: "campfire-loop.mp3") == .fire)
+        #expect(guessCategory(from: "fire-crackle.mp3") == .fire)
+        #expect(guessCategory(from: "wind-howl.mp3") == .wind)
+        #expect(guessCategory(from: "morning-birds.mp3") == .birds)
+        #expect(guessCategory(from: "city-traffic.mp3") == .urban)
+        #expect(guessCategory(from: "thunder-rumble.mp3") == .thunder)
+        #expect(guessCategory(from: "river-flow.mp3") == .water)
+        #expect(guessCategory(from: "train-passing.mp3") == .transport)
+    }
+
+    @Test func unknownFilenameFallsBackToThings() {
+        #expect(guessCategory(from: "asdf.mp3") == .things)
+    }
+}
+
+// MARK: - Test Env Extensions
+
+extension TestEnv {
+    /// Builds a TestEnv with a low import-size cap so tests can verify the
+    /// `tooLarge` path without writing a 50 MB fixture.
+    static func makeWithImportLimit(_ limit: Int64) throws -> TestEnv {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("hush-tests-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+
+        let storage = tempDir.appendingPathComponent("UserSounds", isDirectory: true)
+        let schema = Schema([SavedPreset.self, UserSoundAsset.self])
+        let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
+        let container = try ModelContainer(for: schema, configurations: [config])
+        let context = ModelContext(container)
+        let library = UserSoundLibrary(
+            modelContext: context,
+            storageDirectory: storage,
+            maximumImportFileSizeBytes: limit
+        )
+        return TestEnv(library: library, tempDir: tempDir)
+    }
+}

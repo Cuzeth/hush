@@ -7,6 +7,15 @@ struct ContentView: View {
     @AppStorage("autoResumeLast") private var autoResumeLast = false
     @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
     @Environment(\.scenePhase) private var scenePhase
+    let storageFailureMessage: String?
+    /// One-shot per launch — guarantees the storage-failure alert fires once
+    /// even though `.onAppear` can re-fire when the Group switches between
+    /// OnboardingView and PlayerView (or on scene resume).
+    @State private var storageFailureSurfaced = false
+
+    init(storageFailureMessage: String? = nil) {
+        self.storageFailureMessage = storageFailureMessage
+    }
 
     var body: some View {
         Group {
@@ -25,6 +34,10 @@ struct ContentView: View {
         .onAppear {
             AudioEngine.shared.configureAudioSession()
             viewModel.bindUserSoundLibrary(userSoundLibrary)
+            if let storageFailureMessage, !storageFailureSurfaced {
+                viewModel.storageFailureMessage = storageFailureMessage
+                storageFailureSurfaced = true
+            }
             if hasCompletedOnboarding && autoResumeLast {
                 if viewModel.restoreLastSession() {
                     viewModel.play()

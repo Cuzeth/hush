@@ -79,6 +79,14 @@ struct PlayerView: View {
             } message: {
                 Text(viewModel.errorMessage ?? "")
             }
+            .alert("Storage Error", isPresented: Binding(
+                get: { viewModel.storageFailureMessage != nil },
+                set: { if !$0 { viewModel.storageFailureMessage = nil } }
+            )) {
+                Button("OK") {}
+            } message: {
+                Text(viewModel.storageFailureMessage ?? "")
+            }
             .sheet(isPresented: $showSavePreset) {
                 SavePresetSheet(
                     name: $presetName,
@@ -458,10 +466,16 @@ private struct SavePresetSheet: View {
                         .disabled(name.isEmpty)
                 }
             }
-            // .defaultFocus lets SwiftUI time keyboard appearance against the
-            // sheet presentation — avoids the mid-animation snapshot spike
-            // that used to starve the audio render thread.
-            .defaultFocus($nameFieldFocused, true)
+            // Defer focus past the sheet presentation animation. The keyboard
+            // snapshot done by UIKit when this field becomes first responder
+            // mid-animation used to starve the audio render thread; the
+            // 450ms delay was found by profiling on-device. `.defaultFocus`
+            // is undocumented to defer past presentation, so we keep the
+            // explicit delay until verified otherwise.
+            .task {
+                try? await Task.sleep(for: .milliseconds(450))
+                nameFieldFocused = true
+            }
         }
         .tint(HushPalette.accentSoft)
     }

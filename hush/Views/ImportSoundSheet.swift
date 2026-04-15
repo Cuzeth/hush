@@ -410,16 +410,28 @@ struct ImportSoundSheet: View {
 
     private func guessCategory(from filename: String) -> SoundCategory {
         let lower = filename.lowercased()
+        // Keyword map first — short tokens match the way users actually name
+        // files ("ocean.mp3", not "ocean & waves.mp3"). Order matters where
+        // tokens overlap (e.g. "campfire" before "fire").
+        let keywords: [(String, SoundCategory)] = [
+            ("rain", .rain),
+            ("thunder", .thunder), ("storm", .thunder),
+            ("ocean", .ocean), ("wave", .ocean), ("sea", .ocean),
+            ("campfire", .fire), ("fire", .fire), ("flame", .fire),
+            ("wind", .wind),
+            ("bird", .birds), ("chirp", .birds),
+            ("water", .water), ("river", .water), ("stream", .water),
+            ("traffic", .urban), ("city", .urban), ("siren", .urban),
+            ("train", .transport), ("plane", .transport), ("airplane", .transport),
+        ]
+        for (token, category) in keywords {
+            if lower.contains(token) { return category }
+        }
+        // Fallback — full rawValue match (handles longer names like
+        // "Coffee Shop & Cafe" matching "Cafe").
         for category in SoundCategory.allCases {
             if lower.contains(category.rawValue.lowercased()) { return category }
         }
-        // A few common keywords that don't match category labels exactly.
-        if lower.contains("rain") { return .rain }
-        if lower.contains("wave") || lower.contains("ocean") { return .ocean }
-        if lower.contains("fire") || lower.contains("flame") { return .fire }
-        if lower.contains("wind") { return .wind }
-        if lower.contains("bird") { return .birds }
-        if lower.contains("city") || lower.contains("traffic") { return .urban }
         return .things
     }
 }

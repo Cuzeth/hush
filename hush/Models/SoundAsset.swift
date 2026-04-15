@@ -152,14 +152,17 @@ enum SoundAssetRegistry {
     ///
     /// Convention: all callers go through main. We use `nonisolated(unsafe)`
     /// to match the surrounding codebase's pattern (audio engine asserts
-    /// main thread; views are MainActor by default).
+    /// main thread; views are MainActor by default). The accessor methods
+    /// below assert main-thread to trap accidental background callers in
+    /// debug instead of risking a silent data race against `library.refresh()`.
     nonisolated(unsafe) static var userLookup: ((String) -> SoundAsset?)?
     nonisolated(unsafe) static var userAssetsProvider: (() -> [SoundAsset])?
 
     /// All known assets — bundled plus whatever the user library currently
     /// exposes. Used by category listings.
     static var all: [SoundAsset] {
-        bundled + (userAssetsProvider?() ?? [])
+        if userAssetsProvider != nil { assertMainThreadForUserAccess() }
+        return bundled + (userAssetsProvider?() ?? [])
     }
 
     static func assets(for category: SoundCategory) -> [SoundAsset] {
@@ -167,10 +170,24 @@ enum SoundAssetRegistry {
     }
 
     static func asset(withID id: String) -> SoundAsset? {
-        if id.hasPrefix("user."), let userAsset = userLookup?(id) {
-            return userAsset
+        if id.hasPrefix("user.") {
+            if userLookup != nil { assertMainThreadForUserAccess() }
+            if let userAsset = userLookup?(id) { return userAsset }
+            return nil
         }
         return bundled.first { $0.id == id }
+    }
+
+    /// Trips in debug if a user-asset lookup happens off main while the hook
+    /// is wired — `library.refresh()` mutates `assetsByID` on main and the
+    /// hook reads it. Skipped when the hook is nil (tests / pre-launch).
+    /// Wrapped in `#if DEBUG` so a future background caller doesn't crash
+    /// release builds; the data race is still real in either configuration,
+    /// but a fatal in production is worse than the race itself.
+    private static func assertMainThreadForUserAccess() {
+        #if DEBUG
+        dispatchPrecondition(condition: .onQueue(.main))
+        #endif
     }
 
     // MARK: - Samples (Manual Downloads — CC0 / Pixabay)

@@ -69,12 +69,22 @@ final class PlayerViewModel {
     var showSettings = false
     var activeWarning: PlayerWarning?
     var errorMessage: String?
+    /// One-shot data persistence failure surfaced by HushApp's ModelContainer
+    /// fallback. Distinct from `errorMessage` so the alert can be titled
+    /// correctly ("Storage Error" vs "Audio Error").
+    var storageFailureMessage: String?
 
     let timerState = TimerState()
     @ObservationIgnored private var timerTask: Task<Void, Never>?
     @ObservationIgnored private let engine = AudioEngine.shared
     @ObservationIgnored private weak var userSoundLibrary: UserSoundLibrary?
     @ObservationIgnored private var knownMissingAssetIDs: Set<String> = []
+    /// Tracks whether the user has actively dismissed the missing-imports
+    /// banner this session. Prevents `dismissWarning` → `refreshMissing…`
+    /// from immediately re-popping the same banner. A *new* missing asset
+    /// (recordMissingAsset with inserted=true) clears this so the user
+    /// learns about it.
+    @ObservationIgnored private var missingBannerDismissedThisSession = false
     @ObservationIgnored private static let lastSessionKey = "lastSessionSources"
     @ObservationIgnored private static let timerEndDateKey = "timerEndDate"
     @ObservationIgnored private static let timerDurationKey = "timerDuration"
@@ -116,26 +126,33 @@ final class PlayerViewModel {
         restorePersistedTimerIfNeeded()
     }
 
-    /// Connect the user sound library and surface a banner if any imported
-    /// sounds are already missing at launch (e.g. user removed the file
-    /// outside the app between sessions). Idempotent — safe to call on every
-    /// `onAppear`.
+    /// Connect the user sound library. Idempotent — safe to call on every
+    /// `onAppear`. We intentionally don't pre-seed the missing banner from
+    /// `library.isMissing`; the banner reflects sources the user is *trying
+    /// to play* (engine-reported), not the library snapshot. Settings →
+    /// Imported Sounds shows library-level missing directly.
     func bindUserSoundLibrary(_ library: UserSoundLibrary) {
         userSoundLibrary = library
-        let missing = library.assetsByID.values.filter(\.isMissing).map(\.assetID)
-        for id in missing { knownMissingAssetIDs.insert(id) }
-        refreshMissingWarningIfNeeded()
     }
 
-    private func recordMissingAsset(_ assetID: String) {
+    /// Records a missing asset ID and surfaces the banner if appropriate.
+    /// Internal so tests can drive the chain without spinning up the engine.
+    func recordMissingAsset(_ assetID: String) {
         let (inserted, _) = knownMissingAssetIDs.insert(assetID)
         guard inserted else { return }
+        // A new missing asset undoes any earlier "I dismissed it" — the user
+        // hasn't seen this one yet.
+        missingBannerDismissedThisSession = false
         refreshMissingWarningIfNeeded()
     }
 
     private func refreshMissingWarningIfNeeded() {
         let count = knownMissingAssetIDs.count
         guard count > 0 else { return }
+        // Respect explicit dismissals — without this, dismissWarning would
+        // immediately re-pop the banner via this same method and the banner
+        // would be undismissable.
+        if missingBannerDismissedThisSession { return }
         // Don't trample a more critical active warning (safety, route change).
         // The missing-sounds banner is informational; surface only when the
         // banner slot is free.
@@ -144,6 +161,17 @@ final class PlayerViewModel {
         } else if case .missingUserSounds = activeWarning {
             // Update the count if the banner is already showing this kind.
             showWarning(.missingUserSounds(count: count))
+        }
+    }
+
+    /// Clears the missing banner if it's currently showing, without going
+    /// through `dismissWarning` (which would set the per-session dismissed
+    /// flag — wrong when the system is clearing the banner because the
+    /// underlying problem is gone).
+    private func clearMissingBannerIfShown() {
+        guard case .missingUserSounds = activeWarning else { return }
+        withAnimation(.easeInOut(duration: 0.3)) {
+            activeWarning = nil
         }
     }
 
@@ -161,11 +189,26 @@ final class PlayerViewModel {
 
     func randomMix() {
         stop()
+        let sources = pickRandomMixSources()
+        withAnimation(.easeInOut(duration: 0.35)) {
+            activeSources = sources
+            currentPreset = nil
+        }
+        applyCurrentSources()
+        play()
+    }
+
+    /// Source-selection logic for `randomMix`, factored out so tests can
+    /// verify the bundled-only pool without spinning up the audio engine.
+    func pickRandomMixSources() -> [SoundSource] {
         let count = Int.random(in: 2...4)
 
-        // Mix of generated and sample assets
+        // Mix of generated and sample assets — bundled only. User imports
+        // shouldn't land in Surprise Me; their content (length, fit for
+        // ambient layering) is unverified and missing imports would silently
+        // shrink the resulting mix.
         let generatedTypes: [SoundType] = [.whiteNoise, .pinkNoise, .brownNoise, .grayNoise]
-        let assets = SoundAssetRegistry.all
+        let assets = SoundAssetRegistry.bundled
 
         var sources: [SoundSource] = []
         // Always include one noise generator
@@ -178,13 +221,7 @@ final class PlayerViewModel {
         for asset in selectedAssets {
             sources.append(SoundSource(asset: asset, volume: Float.random(in: 0.3...0.7)))
         }
-
-        withAnimation(.easeInOut(duration: 0.35)) {
-            activeSources = sources
-            currentPreset = nil
-        }
-        applyCurrentSources()
-        play()
+        return sources
     }
 
     func cyclePreset(forward: Bool) {
@@ -274,6 +311,58 @@ final class PlayerViewModel {
         withAnimation(.easeInOut(duration: 0.3)) {
             activeSources.removeAll { $0.id == source.id }
         }
+        // If the user just removed the last source pointing at a missing
+        // import, the banner count needs to drop with it.
+        if let assetID = source.assetID,
+           knownMissingAssetIDs.contains(assetID),
+           !activeSources.contains(where: { $0.assetID == assetID }) {
+            knownMissingAssetIDs.remove(assetID)
+            if knownMissingAssetIDs.isEmpty {
+                // Don't go through dismissWarning here — this is a system
+                // clear ("the problem went away"), not a user dismiss.
+                clearMissingBannerIfShown()
+            } else {
+                refreshMissingWarningIfNeeded()
+            }
+        }
+    }
+
+    /// Re-attach an existing source after its backing file changed.
+    ///
+    /// **Safe only for missing-asset sources.** The engine returns early in
+    /// `addSource` when an asset has no resolved URL, so no player node ever
+    /// gets attached. That means `engine.removeSource(id:)` is synchronous
+    /// (no fade), and the immediate `engine.addSource` doesn't race a
+    /// fade-out completion that would otherwise tear down the new node by id.
+    /// Calling this on a source with an active player would be unsafe;
+    /// the assertion guards future misuse.
+    ///
+    /// Used by the "Missing — tap to relink" affordance in MixerView.
+    func relinkSource(_ source: SoundSource) {
+        guard activeSources.contains(where: { $0.id == source.id }) else { return }
+        if let assetID = source.assetID {
+            assert(knownMissingAssetIDs.contains(assetID),
+                   "relinkSource is only safe for missing-asset sources")
+        }
+        engine.removeSource(id: source.id)
+        if isPlaying {
+            engine.addSource(id: source.id, type: source.type, volume: source.volume,
+                             binauralRange: source.binauralRange,
+                             binauralFrequency: source.binauralFrequency,
+                             toneFrequency: source.toneFrequency,
+                             assetID: source.assetID,
+                             maskingStrength: source.maskingStrength)
+        }
+        // The asset is no longer missing (caller just relinked it). Drop it
+        // from the tracking set so the banner reflects reality.
+        if let assetID = source.assetID {
+            knownMissingAssetIDs.remove(assetID)
+            if knownMissingAssetIDs.isEmpty {
+                clearMissingBannerIfShown()
+            } else {
+                refreshMissingWarningIfNeeded()
+            }
+        }
     }
 
     func updateVolume(for source: SoundSource, volume: Float) {
@@ -302,10 +391,11 @@ final class PlayerViewModel {
     }
 
     private func showBeatSafetyAlertIfNeeded() {
-        let key = "hasSeenBeatSafetyWarning"
-        guard !UserDefaults.standard.bool(forKey: key) else { return }
+        // Mark "seen" only after the user dismisses the banner — otherwise
+        // a higher-priority warning replacing it before they can read it
+        // would burn the single-shot.
+        guard !UserDefaults.standard.bool(forKey: "hasSeenBeatSafetyWarning") else { return }
         showWarning(.beatSafety)
-        UserDefaults.standard.set(true, forKey: key)
     }
 
     /// Surface a warning as a banner. If a banner is already shown, replaces it
@@ -317,9 +407,26 @@ final class PlayerViewModel {
     }
 
     func dismissWarning() {
+        let dismissed = activeWarning
         withAnimation(.easeInOut(duration: 0.3)) {
             activeWarning = nil
         }
+        // Once-ever beat-safety bookkeeping: only count the warning as "seen"
+        // when the user actually dismisses it, so a higher-priority warning
+        // replacing it doesn't burn the single-shot.
+        if case .beatSafety = dismissed {
+            UserDefaults.standard.set(true, forKey: "hasSeenBeatSafetyWarning")
+        }
+        if case .missingUserSounds = dismissed {
+            // User explicitly closed the missing banner — don't immediately
+            // resurface it via refreshMissingWarningIfNeeded. A *new* missing
+            // asset (recordMissingAsset, inserted=true) clears this flag.
+            missingBannerDismissedThisSession = true
+            return
+        }
+        // A higher-priority warning got dismissed — bring back the
+        // missing-imports banner if there's something to surface.
+        refreshMissingWarningIfNeeded()
     }
 
     // MARK: - Playback

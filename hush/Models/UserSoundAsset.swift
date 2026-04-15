@@ -30,6 +30,12 @@ final class UserSoundAsset {
     var crossfadeEnabled: Bool
     var crossfadeDurationMs: Int
 
+    /// SHA-256 of the first ~2 MB of the source file at import time. Used to
+    /// detect re-imports of the same audio so we don't pay disk cost twice.
+    /// Optional so SwiftData migration from records that predate the hash
+    /// (legacy imports) stays automatic.
+    var contentHash: String?
+
     var dateImported: Date
 
     /// Set during `UserSoundLibrary.verify()` when the backing file is gone.
@@ -49,6 +55,7 @@ final class UserSoundAsset {
         crossfadeEnabled: Bool = true,
         crossfadeDurationMs: Int = 100,
         iconOverride: String? = nil,
+        contentHash: String? = nil,
         dateImported: Date = Date(),
         isMissing: Bool = false
     ) {
@@ -63,6 +70,7 @@ final class UserSoundAsset {
         self.crossfadeEnabled = crossfadeEnabled
         self.crossfadeDurationMs = crossfadeDurationMs
         self.iconOverride = iconOverride
+        self.contentHash = contentHash
         self.dateImported = dateImported
         self.isMissing = isMissing
     }

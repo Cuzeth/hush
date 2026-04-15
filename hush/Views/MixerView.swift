@@ -209,16 +209,9 @@ private struct SourceRow: View {
             let scoped = url.startAccessingSecurityScopedResource()
             defer { if scoped { url.stopAccessingSecurityScopedResource() } }
             try? library.relink(asset, to: url)
-            // Re-add the source so the engine picks up the new file. Carry
-            // the user's volume across so the relink doesn't kick the level.
-            let prevVolume = source.volume
-            viewModel.removeSource(source)
-            if let resolved = library.asset(withID: asset.assetID) {
-                viewModel.addAsset(resolved)
-                if let added = viewModel.activeSources.last {
-                    viewModel.updateVolume(for: added, volume: prevVolume)
-                }
-            }
+            // Re-attach the existing source so the engine picks up the new
+            // file without changing the row's UUID, volume, or position.
+            viewModel.relinkSource(source)
         }
     }
 
@@ -241,7 +234,7 @@ struct SoundPickerGrid: View {
     @Environment(UserSoundLibrary.self) private var library
     @State private var expandedCategories: Set<SoundCategory> = []
     @State private var showFileImporter = false
-    @State private var pendingImportURL: URL?
+    @State private var pendingImportURL: ImportURL?
     @State private var importerError: String?
 
     private var columns: [GridItem] {
@@ -328,13 +321,13 @@ struct SoundPickerGrid: View {
             ) { result in
                 switch result {
                 case .success(let urls):
-                    if let first = urls.first { pendingImportURL = first }
+                    if let first = urls.first { pendingImportURL = ImportURL(url: first) }
                 case .failure(let error):
                     flashError(error.localizedDescription)
                 }
             }
-            .sheet(item: $pendingImportURL) { url in
-                ImportSoundSheet(mode: .newImport(sourceURL: url), library: library) { newAsset in
+            .sheet(item: $pendingImportURL) { wrap in
+                ImportSoundSheet(mode: .newImport(sourceURL: wrap.url), library: library) { newAsset in
                     // Auto-add the freshly imported sound and dismiss the
                     // picker — user shouldn't have to find it in the list.
                     if let resolved = library.asset(withID: newAsset.assetID) {
@@ -636,7 +629,6 @@ struct BinauralRangePicker: View {
 
 struct MaskingStrengthSlider: View {
     @Binding var strength: Float
-    @State private var dragEndTrigger = 0
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -650,13 +642,13 @@ struct MaskingStrengthSlider: View {
                     .foregroundStyle(HushPalette.textSecondary)
                     .monospacedDigit()
             }
-            Slider(value: $strength, in: 0...1, onEditingChanged: { editing in
-                if !editing { dragEndTrigger &+= 1 }
-            })
+            Slider(value: $strength, in: 0...1)
             .tint(HushPalette.accentSoft)
             .accessibilityLabel("Masking strength")
             .accessibilityValue("\(Int(strength * 100)) percent")
         }
-        .sensoryFeedback(.selection, trigger: dragEndTrigger)
+        // Subtle click every 10% during drag — matches TimerView's per-detent
+        // model so the haptic language is consistent across sliders.
+        .sensoryFeedback(.selection, trigger: Int(strength * 10))
     }
 }

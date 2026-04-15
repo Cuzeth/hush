@@ -452,7 +452,13 @@ final class AudioEngine: @unchecked Sendable {
         // will render with a "Missing — relink" affordance.
         guard asset.resolvedURL != nil else {
             logger.warning("Skipping missing sample asset: \(asset.id)")
-            onSampleAssetMissing?(asset.id)
+            // Bundled missing means a distribution bug (corrupt app bundle),
+            // not a user-actionable problem. The "go to Settings → Imported
+            // Sounds" banner copy would be misleading, so only notify for
+            // user imports.
+            if asset.id.hasPrefix("user.") {
+                onSampleAssetMissing?(asset.id)
+            }
             return
         }
 
@@ -495,6 +501,20 @@ final class AudioEngine: @unchecked Sendable {
                             self.fadeInSource(id: id, targetVolume: config.volume)
                         }
                     }
+                } else {
+                    // Decode failed (e.g. user file was corrupted between the
+                    // URL probe and now). Surface to the VM the same way a
+                    // missing-URL asset does, and tear down the orphaned node
+                    // so it doesn't sit attached forever.
+                    self.logger.warning("Sample buffer load failed: \(asset.id)")
+                    if asset.id.hasPrefix("user.") {
+                        self.onSampleAssetMissing?(asset.id)
+                    }
+                    currentNode.stop()
+                    self.engine.disconnectNodeOutput(currentNode)
+                    self.engine.detach(currentNode)
+                    self.playerNodes.removeValue(forKey: id)
+                    self.samplePlayers.removeValue(forKey: id)
                 }
             }
         }
@@ -551,6 +571,22 @@ final class AudioEngine: @unchecked Sendable {
                             self.fadeInSource(id: id, targetVolume: config.volume)
                         }
                     }
+                } else {
+                    // Same surface as `addSampleSource` — a corrupt bundle
+                    // shouldn't fail silently for legacy types either, but
+                    // bundled missing isn't user-actionable, so we only
+                    // notify for user imports (the banner copy points at
+                    // Settings → Imported Sounds).
+                    let missingID = config.assetID ?? config.type.rawValue
+                    self.logger.warning("Legacy sample missing: \(missingID) (\(fileName))")
+                    if missingID.hasPrefix("user.") {
+                        self.onSampleAssetMissing?(missingID)
+                    }
+                    currentNode.stop()
+                    self.engine.disconnectNodeOutput(currentNode)
+                    self.engine.detach(currentNode)
+                    self.playerNodes.removeValue(forKey: id)
+                    self.samplePlayers.removeValue(forKey: id)
                 }
             }
         }

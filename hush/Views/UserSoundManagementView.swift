@@ -11,7 +11,7 @@ struct UserSoundManagementView: View {
     @State private var showImporter = false
     @State private var editingAsset: UserSoundAsset?
     @State private var relinkAsset: UserSoundAsset?
-    @State private var pendingNewImportURL: URL?
+    @State private var pendingNewImportURL: ImportURL?
     @State private var importerError: String?
 
     private var assets: [UserSoundAsset] {
@@ -63,7 +63,7 @@ struct UserSoundManagementView: View {
             switch result {
             case .success(let urls):
                 if let first = urls.first {
-                    pendingNewImportURL = first
+                    pendingNewImportURL = ImportURL(url: first)
                 }
             case .failure(let error):
                 showImporterError(error.localizedDescription)
@@ -72,8 +72,8 @@ struct UserSoundManagementView: View {
         .sheet(item: $editingAsset) { asset in
             ImportSoundSheet(mode: .edit(asset: asset), library: library)
         }
-        .sheet(item: $pendingNewImportURL) { url in
-            ImportSoundSheet(mode: .newImport(sourceURL: url), library: library)
+        .sheet(item: $pendingNewImportURL) { wrap in
+            ImportSoundSheet(mode: .newImport(sourceURL: wrap.url), library: library)
         }
         .fileImporter(
             isPresented: Binding(
@@ -273,7 +273,9 @@ private struct AssetRow: View {
     }
 }
 
-// Lets us drive `.sheet(item:)` from a URL.
-extension URL: @retroactive Identifiable {
-    public var id: String { absoluteString }
+/// Wrapper used to drive `.sheet(item:)` from a URL without polluting the
+/// global `URL` type with a retroactive `Identifiable` conformance.
+struct ImportURL: Identifiable {
+    let url: URL
+    var id: String { url.absoluteString }
 }
