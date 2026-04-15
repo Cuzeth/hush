@@ -79,6 +79,12 @@ final class AudioEngine: @unchecked Sendable {
     var onPreviousPreset: (() -> Void)?
     var onError: ((String) -> Void)?
 
+    /// Fires when a sample source can't be played because the backing file
+    /// is gone (user-imported sound deleted in Files app, etc.). The string
+    /// is the missing assetID. The VM uses this to surface a "missing
+    /// sounds" banner without the engine knowing about UI state.
+    var onSampleAssetMissing: ((String) -> Void)?
+
     // Displayed in Now Playing / lock screen
     var currentPresetName: String = "Hush"
     var currentPresetIcon: String?
@@ -437,6 +443,16 @@ final class AudioEngine: @unchecked Sendable {
             if let fileName = config.type.sampleFileName {
                 addLegacySampleSource(id: id, config: config, fileName: fileName)
             }
+            return
+        }
+
+        // Asset is registered but its file is missing — usually a user import
+        // whose backing file was deleted. Skip the load and notify the VM so
+        // it can surface a banner. Don't tear down or warn; the source row
+        // will render with a "Missing — relink" affordance.
+        guard asset.resolvedURL != nil else {
+            logger.warning("Skipping missing sample asset: \(asset.id)")
+            onSampleAssetMissing?(asset.id)
             return
         }
 

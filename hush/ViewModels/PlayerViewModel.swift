@@ -7,12 +7,14 @@ enum PlayerWarning: Identifiable, Equatable {
     case headphonesRecommended
     case beatSafety
     case binauralRouteDisconnect
+    case missingUserSounds(count: Int)
 
     var id: String {
         switch self {
         case .headphonesRecommended: return "headphones"
         case .beatSafety: return "beatSafety"
         case .binauralRouteDisconnect: return "routeDisconnect"
+        case .missingUserSounds: return "missingUserSounds"
         }
     }
 
@@ -21,6 +23,7 @@ enum PlayerWarning: Identifiable, Equatable {
         case .headphonesRecommended: return "headphones"
         case .beatSafety: return "exclamationmark.triangle.fill"
         case .binauralRouteDisconnect: return "ear.trianglebadge.exclamationmark"
+        case .missingUserSounds: return "questionmark.folder"
         }
     }
 
@@ -29,6 +32,7 @@ enum PlayerWarning: Identifiable, Equatable {
         case .headphonesRecommended: return "Headphones recommended"
         case .beatSafety: return "A note on entrainment"
         case .binauralRouteDisconnect: return "Headphones disconnected"
+        case .missingUserSounds: return "Some imported sounds are missing"
         }
     }
 
@@ -40,6 +44,9 @@ enum PlayerWarning: Identifiable, Equatable {
             return "Beats and tones can feel strange. Stop if you feel dizzy, and check with a doctor first if you have epilepsy."
         case .binauralRouteDisconnect:
             return "Playback paused. Reconnect headphones and press play to resume."
+        case .missingUserSounds(let count):
+            let noun = count == 1 ? "sound" : "sounds"
+            return "\(count) imported \(noun) couldn't be found. Open Settings → Imported Sounds to relink or remove."
         }
     }
 
@@ -66,6 +73,8 @@ final class PlayerViewModel {
     let timerState = TimerState()
     @ObservationIgnored private var timerTask: Task<Void, Never>?
     @ObservationIgnored private let engine = AudioEngine.shared
+    @ObservationIgnored private weak var userSoundLibrary: UserSoundLibrary?
+    @ObservationIgnored private var knownMissingAssetIDs: Set<String> = []
     @ObservationIgnored private static let lastSessionKey = "lastSessionSources"
     @ObservationIgnored private static let timerEndDateKey = "timerEndDate"
     @ObservationIgnored private static let timerDurationKey = "timerDuration"
@@ -99,8 +108,43 @@ final class PlayerViewModel {
             self?.errorMessage = message
         }
 
+        engine.onSampleAssetMissing = { [weak self] assetID in
+            self?.recordMissingAsset(assetID)
+        }
+
         timerState.playChimeOnEnd = UserDefaults.standard.object(forKey: Self.timerPlayChimeKey) as? Bool ?? true
         restorePersistedTimerIfNeeded()
+    }
+
+    /// Connect the user sound library and surface a banner if any imported
+    /// sounds are already missing at launch (e.g. user removed the file
+    /// outside the app between sessions). Idempotent — safe to call on every
+    /// `onAppear`.
+    func bindUserSoundLibrary(_ library: UserSoundLibrary) {
+        userSoundLibrary = library
+        let missing = library.assetsByID.values.filter(\.isMissing).map(\.assetID)
+        for id in missing { knownMissingAssetIDs.insert(id) }
+        refreshMissingWarningIfNeeded()
+    }
+
+    private func recordMissingAsset(_ assetID: String) {
+        let (inserted, _) = knownMissingAssetIDs.insert(assetID)
+        guard inserted else { return }
+        refreshMissingWarningIfNeeded()
+    }
+
+    private func refreshMissingWarningIfNeeded() {
+        let count = knownMissingAssetIDs.count
+        guard count > 0 else { return }
+        // Don't trample a more critical active warning (safety, route change).
+        // The missing-sounds banner is informational; surface only when the
+        // banner slot is free.
+        if activeWarning == nil {
+            showWarning(.missingUserSounds(count: count))
+        } else if case .missingUserSounds = activeWarning {
+            // Update the count if the banner is already showing this kind.
+            showWarning(.missingUserSounds(count: count))
+        }
     }
 
     // MARK: - Preset Loading

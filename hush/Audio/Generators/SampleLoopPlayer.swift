@@ -33,22 +33,12 @@ final class SampleLoopPlayer: @unchecked Sendable {
         guard !isLoaded else { return }
         assetID = asset.id
 
-        // Search for the file in the bundle subdirectory
-        guard let url = Bundle.main.url(
-            forResource: asset.fileName,
-            withExtension: asset.fileExtension,
-            subdirectory: asset.subdirectory
-        ) else {
-            // Fallback: search without subdirectory
-            guard let fallbackURL = Bundle.main.url(
-                forResource: asset.fileName,
-                withExtension: asset.fileExtension
-            ) else {
-                Self.logger.error("Failed to find audio file: \(asset.subdirectory)/\(asset.fileName).\(asset.fileExtension)")
-                isLoaded = false
-                return
-            }
-            loadFromURL(fallbackURL, targetSampleRate: targetSampleRate, crossfadeDurationMs: asset.crossfadeDurationMs)
+        guard let url = asset.resolvedURL else {
+            // For user assets this means the file was deleted out from under us
+            // (Files app, restore from a partial backup). For bundled assets it
+            // would only happen on a corrupt build.
+            Self.logger.error("Failed to resolve URL for asset: \(asset.id)")
+            isLoaded = false
             return
         }
 
@@ -163,6 +153,11 @@ final class SampleLoopPlayer: @unchecked Sendable {
         from source: AVAudioPCMBuffer,
         crossfadeSamples C: Int
     ) -> AVAudioPCMBuffer? {
+        // Caller opted out of crossfading (e.g. user import with the toggle
+        // off). Return the converted buffer unchanged — loops will click at
+        // the seam but playback is otherwise faithful to the source.
+        if C <= 0 { return source }
+
         let N = Int(source.frameLength)
         let channels = Int(source.format.channelCount)
         guard N > C * 2 else { return source }

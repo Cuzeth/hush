@@ -3,6 +3,7 @@ import SwiftData
 
 struct ContentView: View {
     @State private var viewModel = PlayerViewModel()
+    @Environment(UserSoundLibrary.self) private var userSoundLibrary
     @AppStorage("autoResumeLast") private var autoResumeLast = false
     @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
     @Environment(\.scenePhase) private var scenePhase
@@ -23,6 +24,7 @@ struct ContentView: View {
         .preferredColorScheme(.dark)
         .onAppear {
             AudioEngine.shared.configureAudioSession()
+            viewModel.bindUserSoundLibrary(userSoundLibrary)
             if hasCompletedOnboarding && autoResumeLast {
                 if viewModel.restoreLastSession() {
                     viewModel.play()
@@ -37,6 +39,10 @@ struct ContentView: View {
 }
 
 #Preview {
-    ContentView()
-        .modelContainer(for: SavedPreset.self, inMemory: true)
+    let schema = Schema([SavedPreset.self, UserSoundAsset.self])
+    let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
+    let container = try! ModelContainer(for: schema, configurations: [config])
+    return ContentView()
+        .modelContainer(container)
+        .environment(UserSoundLibrary(modelContext: ModelContext(container)))
 }

@@ -1660,6 +1660,85 @@ struct UserSoundLibraryTests {
     }
 }
 
+// MARK: - SampleLoopPlayer Tests (user-asset path)
+
+@MainActor
+struct SampleLoopPlayerUserAssetTests {
+
+    @Test func loadsUserAssetViaAbsolutePath() throws {
+        let env = try TestEnv.make()
+        let url = try env.makeAudioFixture(name: "tone", durationSeconds: 2.0)
+        let asset = SoundAsset(
+            id: "user.test",
+            displayName: "Test",
+            category: .things,
+            fileName: url.lastPathComponent,
+            fileExtension: "",
+            subdirectory: "",
+            license: .userImported,
+            crossfadeStyle: .stochastic,
+            isMono: true,
+            absolutePath: url.path
+        )
+
+        let player = SampleLoopPlayer()
+        player.loadAsset(asset, targetSampleRate: 44100)
+
+        #expect(player.isLoaded)
+        #expect(player.loopBuffer != nil)
+        #expect(player.assetID == "user.test")
+    }
+
+    @Test func loadAssetReturnsEmptyWhenFileMissing() {
+        let asset = SoundAsset(
+            id: "user.gone",
+            displayName: "Gone",
+            category: .things,
+            fileName: "nope.wav",
+            fileExtension: "",
+            subdirectory: "",
+            license: .userImported,
+            crossfadeStyle: .stochastic,
+            isMono: true,
+            absolutePath: "/tmp/this-file-does-not-exist-\(UUID().uuidString).wav"
+        )
+
+        let player = SampleLoopPlayer()
+        player.loadAsset(asset, targetSampleRate: 44100)
+
+        #expect(player.isLoaded == false)
+        #expect(player.loopBuffer == nil)
+    }
+
+    @Test func loadAssetWithZeroCrossfaceReturnsBufferUnchanged() throws {
+        let env = try TestEnv.make()
+        let url = try env.makeAudioFixture(name: "tone", durationSeconds: 2.0)
+        let asset = SoundAsset(
+            id: "user.nofade",
+            displayName: "No Fade",
+            category: .things,
+            fileName: url.lastPathComponent,
+            fileExtension: "",
+            subdirectory: "",
+            license: .userImported,
+            crossfadeStyle: .stochastic,
+            isMono: true,
+            absolutePath: url.path,
+            crossfadeOverrideMs: 0
+        )
+
+        let player = SampleLoopPlayer()
+        player.loadAsset(asset, targetSampleRate: 44100)
+
+        #expect(player.isLoaded)
+        // With crossfade disabled the loop buffer keeps the full source length
+        // (no trim). 2 seconds at 44.1 kHz ≈ 88200 frames; allow slack for
+        // sample-rate conversion rounding.
+        let frames = Int(player.loopBuffer?.frameLength ?? 0)
+        #expect(frames > 87000 && frames < 89000)
+    }
+}
+
 // MARK: - Helpers
 
 @MainActor
