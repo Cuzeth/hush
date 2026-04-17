@@ -206,7 +206,7 @@ struct PresetSelector: View {
         HStack(spacing: 14) {
             Image(systemName: icon)
                 .font(.body.weight(.semibold))
-                .foregroundStyle(isSelected ? Color.black : HushPalette.textPrimary)
+                .foregroundStyle(isSelected ? HushPalette.onAccent : HushPalette.textPrimary)
                 .frame(width: 40, height: 40)
                 .background(
                     Circle()

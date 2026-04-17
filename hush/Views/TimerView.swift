@@ -175,7 +175,7 @@ struct TimerView: View {
                 } label: {
                     Text("Start \(customMinutes)-minute timer")
                         .font(.headline.weight(.semibold))
-                        .foregroundStyle(Color.black)
+                        .foregroundStyle(HushPalette.onAccent)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 16)
                         .background(HushPalette.accent, in: Capsule())

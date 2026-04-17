@@ -115,7 +115,7 @@ struct PlayerView: View {
                             .font(.caption.weight(.semibold))
                             .monospacedDigit()
                     }
-                    .foregroundStyle(Color.black)
+                    .foregroundStyle(HushPalette.onAccent)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 8)
                     .background(Capsule().fill(HushPalette.accent))
@@ -289,7 +289,7 @@ struct PlayerView: View {
                         Text(viewModel.isPlaying ? "Pause" : "Play")
                             .font(.body.weight(.semibold))
                     }
-                    .foregroundStyle(viewModel.activeSources.isEmpty ? HushPalette.textSecondary : Color.black)
+                    .foregroundStyle(viewModel.activeSources.isEmpty ? HushPalette.textSecondary : HushPalette.onAccent)
                     .frame(maxWidth: .infinity)
                     .frame(minHeight: playButtonHeight)
                     .background(
@@ -381,7 +381,7 @@ private struct SavePresetSheet: View {
                                     } label: {
                                         Image(systemName: choice)
                                             .font(.body.weight(.semibold))
-                                            .foregroundStyle(selected ? Color.black : HushPalette.textPrimary)
+                                            .foregroundStyle(selected ? HushPalette.onAccent : HushPalette.textPrimary)
                                             .frame(width: 44, height: 44)
                                             .background(
                                                 Circle()

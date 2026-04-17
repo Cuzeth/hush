@@ -10,6 +10,7 @@ struct SettingsView: View {
     @AppStorage("fadeDuration") private var fadeDuration: Double = AudioConstants.defaultFadeDuration
     @AppStorage("binauralCarrier") private var binauralCarrier: Double = Double(AudioConstants.defaultBinauralCarrier)
     @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
+    @AppStorage("appearance") private var appearanceRaw: String = Appearance.system.rawValue
 
     @State private var headphonesConnected = AudioEngine.headphonesConnected
     @State private var showCredits = false
@@ -26,6 +27,18 @@ struct SettingsView: View {
                 HushBackdrop()
 
                 List {
+                    Section("Appearance") {
+                        Picker("Theme", selection: Binding(
+                            get: { Appearance(rawValue: appearanceRaw) ?? .system },
+                            set: { appearanceRaw = $0.rawValue }
+                        )) {
+                            ForEach(Appearance.allCases) { option in
+                                Text(option.label).tag(option)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                    }
+
                     Section {
                         Toggle("Auto-resume last session", isOn: $autoResumeLast)
 

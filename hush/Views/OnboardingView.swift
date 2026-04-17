@@ -37,7 +37,7 @@ struct OnboardingView: View {
                 } label: {
                     Text("Get Started")
                         .font(.headline)
-                        .foregroundStyle(.black)
+                        .foregroundStyle(HushPalette.onAccent)
                         .frame(maxWidth: .infinity)
                         .frame(height: 56)
                         .background(Capsule().fill(HushPalette.accent))

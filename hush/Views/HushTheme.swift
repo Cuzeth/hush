@@ -1,18 +1,74 @@
 import SwiftUI
+import UIKit
 
+/// Dynamic palette tokens. Each color resolves at render time against the
+/// active UITraitCollection, so flipping `preferredColorScheme` (or the
+/// system appearance) swaps both modes without any view-level branching.
+///
+/// Dark is the authored baseline — values track the pre-light-mode palette
+/// so existing surfaces keep their character. Light is tuned for similar
+/// contrast ratios (body text ~10:1, secondary ~6:1) on a warm near-white.
 enum HushPalette {
-    static let background = Color(red: 0.035, green: 0.036, blue: 0.044)
-    static let backgroundLift = Color(red: 0.066, green: 0.070, blue: 0.086)
-    static let surface = Color(red: 0.082, green: 0.086, blue: 0.104)
-    static let surfaceRaised = Color(red: 0.118, green: 0.124, blue: 0.148)
-    static let outline = Color.white.opacity(0.08)
-    static let outlineStrong = Color.white.opacity(0.16)
-    static let textPrimary = Color(red: 0.952, green: 0.948, blue: 0.928)
-    static let textSecondary = Color(red: 0.694, green: 0.701, blue: 0.748)
-    static let textMuted = Color.white.opacity(0.55)
-    static let accent = Color(red: 0.936, green: 0.904, blue: 0.832)
-    static let accentSoft = Color(red: 0.690, green: 0.760, blue: 0.734)
-    static let danger = Color(red: 0.924, green: 0.446, blue: 0.415)
+    static let background = dynamic(
+        dark: Color(red: 0.035, green: 0.036, blue: 0.044),
+        light: Color(red: 0.980, green: 0.976, blue: 0.966)
+    )
+    static let backgroundLift = dynamic(
+        dark: Color(red: 0.066, green: 0.070, blue: 0.086),
+        light: Color(red: 0.958, green: 0.951, blue: 0.938)
+    )
+    static let surface = dynamic(
+        dark: Color(red: 0.082, green: 0.086, blue: 0.104),
+        light: Color(red: 0.948, green: 0.942, blue: 0.928)
+    )
+    static let surfaceRaised = dynamic(
+        dark: Color(red: 0.118, green: 0.124, blue: 0.148),
+        light: Color(red: 0.916, green: 0.908, blue: 0.892)
+    )
+    static let outline = dynamic(
+        dark: Color.white.opacity(0.08),
+        light: Color.black.opacity(0.08)
+    )
+    static let outlineStrong = dynamic(
+        dark: Color.white.opacity(0.16),
+        light: Color.black.opacity(0.16)
+    )
+    static let textPrimary = dynamic(
+        dark: Color(red: 0.952, green: 0.948, blue: 0.928),
+        light: Color(red: 0.110, green: 0.100, blue: 0.088)
+    )
+    static let textSecondary = dynamic(
+        dark: Color(red: 0.694, green: 0.701, blue: 0.748),
+        light: Color(red: 0.384, green: 0.376, blue: 0.348)
+    )
+    static let textMuted = dynamic(
+        dark: Color.white.opacity(0.55),
+        light: Color.black.opacity(0.45)
+    )
+    /// Warm cream in dark, warm tan in light. Stays luminous enough that
+    /// black text sits on it at ≥5:1 in both modes.
+    static let accent = dynamic(
+        dark: Color(red: 0.936, green: 0.904, blue: 0.832),
+        light: Color(red: 0.796, green: 0.710, blue: 0.560)
+    )
+    /// Muted sage. Used for secondary actions and active chips. The light
+    /// variant deepens for visible weight on a near-white background.
+    static let accentSoft = dynamic(
+        dark: Color(red: 0.690, green: 0.760, blue: 0.734),
+        light: Color(red: 0.310, green: 0.442, blue: 0.378)
+    )
+    static let danger = dynamic(
+        dark: Color(red: 0.924, green: 0.446, blue: 0.415),
+        light: Color(red: 0.792, green: 0.288, blue: 0.248)
+    )
+
+    /// Subtle rim applied on top of an accent-filled surface (the highlighted
+    /// HushInfoPill border). White-on-cream in dark, near-black-on-tan in
+    /// light — in both cases a quiet darken/lighten of the accent itself.
+    static let accentEdge = dynamic(
+        dark: Color.white.opacity(0.25),
+        light: Color.black.opacity(0.18)
+    )
 
     // Semantic fills — keep per-site opacity tweaks rare.
     static let panelFill = surface.opacity(0.94)       // Item cards, rows
@@ -20,6 +76,42 @@ enum HushPalette {
     static let raisedFill = surfaceRaised.opacity(0.92) // Icon circles, strong chips
     static let chipMuted = surfaceRaised.opacity(0.6)  // Unselected chip
     static let chipActive = accentSoft.opacity(0.3)    // Selected chip
+
+    /// Text color that sits *on top of* `accent` (Play button, active chip
+    /// icon, selected preset circle). Black in both modes because `accent`
+    /// stays luminous enough in both — but named so call sites stop writing
+    /// raw `Color.black` and we can retune once without a sweep.
+    static let onAccent = Color.black
+
+    private static func dynamic(dark: Color, light: Color) -> Color {
+        Color(UIColor { trait in
+            trait.userInterfaceStyle == .dark ? UIColor(dark) : UIColor(light)
+        })
+    }
+}
+
+/// User-selectable appearance. Persisted via `@AppStorage("appearance")`.
+/// `.system` returns nil so SwiftUI falls through to the OS setting.
+enum Appearance: String, CaseIterable, Identifiable {
+    case system, light, dark
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .system: return "System"
+        case .light: return "Light"
+        case .dark: return "Dark"
+        }
+    }
+
+    var colorScheme: ColorScheme? {
+        switch self {
+        case .system: return nil
+        case .light: return .light
+        case .dark: return .dark
+        }
+    }
 }
 
 /// Corner-radius scale. Three steps; don't introduce a fourth without a reason.
@@ -132,7 +224,7 @@ struct HushInfoPill: View {
                 .font(.caption.weight(.medium))
                 .monospacedDigit()
         }
-        .foregroundStyle(highlighted ? Color.black : HushPalette.textSecondary)
+        .foregroundStyle(highlighted ? HushPalette.onAccent : HushPalette.textSecondary)
         .padding(.horizontal, 12)
         .padding(.vertical, 9)
         .background(
@@ -141,7 +233,7 @@ struct HushInfoPill: View {
                 .overlay(
                     Capsule()
                         .strokeBorder(
-                            highlighted ? Color.white.opacity(0.25) : HushPalette.outline,
+                            highlighted ? HushPalette.accentEdge : HushPalette.outline,
                             lineWidth: 1
                         )
                 )

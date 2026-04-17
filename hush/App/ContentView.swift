@@ -6,7 +6,12 @@ struct ContentView: View {
     @Environment(UserSoundLibrary.self) private var userSoundLibrary
     @AppStorage("autoResumeLast") private var autoResumeLast = false
     @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
+    @AppStorage("appearance") private var appearanceRaw: String = Appearance.system.rawValue
     @Environment(\.scenePhase) private var scenePhase
+
+    private var appearance: Appearance {
+        Appearance(rawValue: appearanceRaw) ?? .system
+    }
     let storageFailureMessage: String?
     /// One-shot per launch — guarantees the storage-failure alert fires once
     /// even though `.onAppear` can re-fire when the Group switches between
@@ -30,7 +35,7 @@ struct ContentView: View {
                 }
             }
         }
-        .preferredColorScheme(.dark)
+        .preferredColorScheme(appearance.colorScheme)
         .onAppear {
             AudioEngine.shared.configureAudioSession()
             viewModel.bindUserSoundLibrary(userSoundLibrary)
