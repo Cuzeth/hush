@@ -71,21 +71,17 @@ struct PlayerView: View {
             .sheet(isPresented: $viewModel.showSettings) {
                 SettingsView(viewModel: viewModel)
             }
-            .alert("Audio Error", isPresented: Binding(
-                get: { viewModel.errorMessage != nil },
-                set: { if !$0 { viewModel.errorMessage = nil } }
-            )) {
+            .alert(
+                viewModel.activeAlert?.title ?? "",
+                isPresented: Binding(
+                    get: { viewModel.activeAlert != nil },
+                    set: { if !$0 { viewModel.dismissActiveAlert() } }
+                ),
+                presenting: viewModel.activeAlert
+            ) { _ in
                 Button("OK") {}
-            } message: {
-                Text(viewModel.errorMessage ?? "")
-            }
-            .alert("Storage Error", isPresented: Binding(
-                get: { viewModel.storageFailureMessage != nil },
-                set: { if !$0 { viewModel.storageFailureMessage = nil } }
-            )) {
-                Button("OK") {}
-            } message: {
-                Text(viewModel.storageFailureMessage ?? "")
+            } message: { alert in
+                Text(alert.message)
             }
             .sheet(isPresented: $showSavePreset) {
                 SavePresetSheet(
@@ -146,30 +142,23 @@ struct PlayerView: View {
 
     private var nowPlayingHeader: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(currentTitle)
-                        .font(.system(.title, design: .serif, weight: .semibold))
-                        .foregroundStyle(HushPalette.textPrimary)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(currentTitle)
+                    .font(.system(.title, design: .serif, weight: .semibold))
+                    .foregroundStyle(HushPalette.textPrimary)
 
-                    if !viewModel.activeSources.isEmpty {
-                        Text(sourcesSummary)
-                            .font(.subheadline)
-                            .foregroundStyle(HushPalette.textSecondary)
-                            .transition(.opacity)
-                    }
-                }
-
-                Spacer()
-
-                if viewModel.isPlaying {
-                    HushInfoPill(icon: "waveform", text: "Playing", highlighted: true)
-                        .accessibilityLabel("Now playing")
-                        .transition(.opacity.combined(with: .scale(scale: 0.92)))
+                if !viewModel.activeSources.isEmpty {
+                    Text(sourcesSummary)
+                        .font(.subheadline)
+                        .foregroundStyle(HushPalette.textSecondary)
+                        .transition(.opacity)
                 }
             }
 
-            // Source chips — only when mix is loaded
+            // Source chips — only when mix is loaded. The chips already carry
+            // the "what's playing" signal, so we don't duplicate with a
+            // separate Playing pill; the transport button's pause-state is the
+            // canonical "are we playing" indicator.
             if !viewModel.activeSources.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
@@ -196,11 +185,7 @@ struct PlayerView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(20)
-        .background(heroBackground)
-        .overlay(
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .strokeBorder(HushPalette.outlineStrong, lineWidth: 1)
-        )
+        .hushPanel(radius: HushRadius.lg, fill: HushPalette.surface)
     }
 
     // MARK: - Mixer Section (progressive disclosure, compact)
@@ -242,7 +227,7 @@ struct PlayerView: View {
                 if reduceMotion {
                     viewModel.showMixer.toggle()
                 } else {
-                    withAnimation(.easeInOut(duration: 0.25)) {
+                    withAnimation(HushMotion.standard) {
                         viewModel.showMixer.toggle()
                     }
                 }
@@ -304,7 +289,7 @@ struct PlayerView: View {
                         Text(viewModel.isPlaying ? "Pause" : "Play")
                             .font(.body.weight(.semibold))
                     }
-                    .foregroundStyle(viewModel.activeSources.isEmpty ? HushPalette.textMuted : Color.black)
+                    .foregroundStyle(viewModel.activeSources.isEmpty ? HushPalette.textSecondary : Color.black)
                     .frame(maxWidth: .infinity)
                     .frame(minHeight: playButtonHeight)
                     .background(
@@ -320,20 +305,6 @@ struct PlayerView: View {
             .padding(.bottom, 12)
             .background(HushPalette.background.opacity(0.95))
         }
-    }
-
-    // MARK: - Hero Background
-
-    private var heroBackground: some View {
-        let colors = activePalette
-        return RoundedRectangle(cornerRadius: 24, style: .continuous)
-            .fill(
-                LinearGradient(
-                    colors: [colors[0].opacity(0.5), colors[1].opacity(0.18), HushPalette.surface],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-            )
     }
 
     // MARK: - Helpers
@@ -359,27 +330,6 @@ struct PlayerView: View {
         }
     }
 
-    private var activePalette: [Color] {
-        let primaryType = viewModel.activeSources.first?.type ?? viewModel.currentPreset?.sources.first?.type
-        switch primaryType {
-        case .rain, .stream, .ocean:
-            return [Color(red: 0.23, green: 0.36, blue: 0.42), Color(red: 0.12, green: 0.17, blue: 0.23)]
-        case .birdsong, .wind:
-            return [Color(red: 0.28, green: 0.40, blue: 0.31), Color(red: 0.12, green: 0.18, blue: 0.15)]
-        case .fire, .thunder:
-            return [Color(red: 0.44, green: 0.27, blue: 0.18), Color(red: 0.18, green: 0.11, blue: 0.10)]
-        case .speechMasking:
-            return [Color(red: 0.30, green: 0.33, blue: 0.38), Color(red: 0.14, green: 0.16, blue: 0.20)]
-        case .binauralBeats, .isochronicTones, .monauralBeats, .pureTone, .drone:
-            return [Color(red: 0.31, green: 0.25, blue: 0.44), Color(red: 0.16, green: 0.12, blue: 0.23)]
-        case .whiteNoise, .pinkNoise, .brownNoise, .grayNoise:
-            return [Color(red: 0.33, green: 0.32, blue: 0.28), Color(red: 0.16, green: 0.15, blue: 0.13)]
-        case .sampleAsset:
-            return [Color(red: 0.25, green: 0.30, blue: 0.35), Color(red: 0.13, green: 0.15, blue: 0.18)]
-        case .none:
-            return [HushPalette.accentGlow, HushPalette.surfaceRaised]
-        }
-    }
 }
 
 private struct SavePresetSheet: View {

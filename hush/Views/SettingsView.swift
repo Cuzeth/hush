@@ -9,6 +9,7 @@ struct SettingsView: View {
     @AppStorage("mixWithOtherAudio") private var mixWithOtherAudio = true
     @AppStorage("fadeDuration") private var fadeDuration: Double = AudioConstants.defaultFadeDuration
     @AppStorage("binauralCarrier") private var binauralCarrier: Double = Double(AudioConstants.defaultBinauralCarrier)
+    @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
 
     @State private var headphonesConnected = AudioEngine.headphonesConnected
     @State private var showCredits = false
@@ -143,7 +144,7 @@ struct SettingsView: View {
                         }
                         .disabled(isResetting)
                     } footer: {
-                        Text("Deletes all saved presets and preferences, then closes the app.")
+                        Text("Deletes all saved presets and preferences, then returns to onboarding.")
                     }
                 }
                 .scrollContentBackground(.hidden)
@@ -171,11 +172,11 @@ struct SettingsView: View {
             }
             .alert("Reset Hush?", isPresented: $showResetConfirmation) {
                 Button("Cancel", role: .cancel) {}
-                Button("Reset & Close", role: .destructive) {
+                Button("Reset", role: .destructive) {
                     resetApp()
                 }
             } message: {
-                Text("This will delete all saved presets, reset all settings to defaults, and close the app.")
+                Text("This will delete all saved presets, imported sounds, and preferences. You'll start from onboarding.")
             }
         }
     }
@@ -224,19 +225,19 @@ struct SettingsView: View {
             }
             .padding(.horizontal, 28)
             .padding(.vertical, 22)
-            .hushPanel(radius: 20)
+            .hushPanel(radius: HushRadius.md)
         }
         .transition(.opacity)
     }
 
     private func resetApp() {
-        withAnimation(.easeInOut(duration: 0.2)) {
+        withAnimation(HushMotion.standard) {
             isResetting = true
         }
 
-        // Stop playback
-        viewModel.stop()
-        viewModel.stopTimer()
+        // Clear all in-memory playback state so ContentView sees a clean VM
+        // when it re-renders into Onboarding.
+        viewModel.clearSession()
 
         // Delete all saved presets and imported sound records
         let presetDescriptor = FetchDescriptor<SavedPreset>()
@@ -257,11 +258,16 @@ struct SettingsView: View {
         if let bundleID = Bundle.main.bundleIdentifier {
             UserDefaults.standard.removePersistentDomain(forName: bundleID)
         }
+        // removePersistentDomain doesn't clear @AppStorage's cached value for
+        // this process; write explicitly so ContentView sees the change.
+        hasCompletedOnboarding = false
 
-        // Close the app after a brief delay so the overlay is visible and
-        // the data wipe completes.
+        // Brief pause so the overlay is perceivable, then dismiss the sheet.
+        // ContentView observes `hasCompletedOnboarding` and will render the
+        // onboarding flow automatically — no `exit(0)` (Apple HIG: never
+        // quit programmatically).
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
-            exit(0)
+            dismiss()
         }
     }
 }

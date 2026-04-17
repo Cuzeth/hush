@@ -21,6 +21,7 @@ struct PresetSelector: View {
     @State private var renameTarget: RenameTarget?
     @State private var presetToEdit: Preset?
     @Namespace private var presetSelection
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @AppStorage("hiddenBuiltInPresets") private var hiddenBuiltInData = Data()
     @AppStorage("renamedBuiltInPresets") private var renamedBuiltInData = Data()
@@ -194,7 +195,7 @@ struct PresetSelector: View {
     }
 
     private func deleteSaved(_ saved: SavedPreset) {
-        withAnimation(.easeInOut(duration: 0.3)) {
+        withAnimation(HushMotion.standard) {
             modelContext.delete(saved)
         }
     }
@@ -234,23 +235,20 @@ struct PresetSelector: View {
         .background {
             ZStack {
                 // Base fill — present on every row.
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                RoundedRectangle(cornerRadius: HushRadius.sm, style: .continuous)
                     .fill(HushPalette.surface.opacity(0.6))
                     .overlay(
-                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        RoundedRectangle(cornerRadius: HushRadius.sm, style: .continuous)
                             .strokeBorder(HushPalette.outline, lineWidth: 1)
                     )
 
                 // Selection highlight — slides between rows via
                 // matchedGeometryEffect when the user picks a new scene.
+                // Reduce-motion users get a plain fade: we skip the matched
+                // effect entirely so SwiftUI falls back to independent
+                // insertion/removal per row.
                 if isSelected {
-                    RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .fill(HushPalette.surfaceRaised.opacity(0.7))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                                .strokeBorder(HushPalette.outlineStrong, lineWidth: 1)
-                        )
-                        .matchedGeometryEffect(id: "presetHighlight", in: presetSelection)
+                    selectionHighlight(inMatchedContext: !reduceMotion)
                 }
             }
         }
@@ -258,6 +256,21 @@ struct PresetSelector: View {
 
     private func presetSummary(_ preset: Preset) -> String {
         soundSourceSummary(preset.sources)
+    }
+
+    @ViewBuilder
+    private func selectionHighlight(inMatchedContext: Bool) -> some View {
+        let shape = RoundedRectangle(cornerRadius: HushRadius.sm, style: .continuous)
+            .fill(HushPalette.surfaceRaised.opacity(0.7))
+            .overlay(
+                RoundedRectangle(cornerRadius: HushRadius.sm, style: .continuous)
+                    .strokeBorder(HushPalette.outlineStrong, lineWidth: 1)
+            )
+        if inMatchedContext {
+            shape.matchedGeometryEffect(id: "presetHighlight", in: presetSelection)
+        } else {
+            shape.transition(.opacity)
+        }
     }
 }
 
@@ -319,15 +332,15 @@ private struct RenamePresetSheet: View {
                         .padding(.vertical, 14)
                         .padding(.horizontal, 16)
                         .background(
-                            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            RoundedRectangle(cornerRadius: HushRadius.sm, style: .continuous)
                                 .fill(HushPalette.raisedFill)
                                 .overlay(
-                                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                    RoundedRectangle(cornerRadius: HushRadius.sm, style: .continuous)
                                         .strokeBorder(
                                             fieldFocused ? HushPalette.accentSoft : HushPalette.outline,
                                             lineWidth: 1
                                         )
-                                        .animation(.easeInOut(duration: 0.15), value: fieldFocused)
+                                        .animation(HushMotion.quick, value: fieldFocused)
                                 )
                         )
 

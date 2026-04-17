@@ -7,6 +7,7 @@ struct EditPresetSheet: View {
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.horizontalSizeClass) private var sizeClass
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @State private var sources: [SoundSource]
     @State private var showAddSound = false
@@ -40,10 +41,10 @@ struct EditPresetSheet: View {
                                 .frame(maxWidth: .infinity)
                                 .padding(.vertical, 16)
                                 .background(
-                                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                                    RoundedRectangle(cornerRadius: HushRadius.md, style: .continuous)
                                         .fill(HushPalette.surfaceRaised.opacity(0.76))
                                         .overlay(
-                                            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                                            RoundedRectangle(cornerRadius: HushRadius.md, style: .continuous)
                                                 .strokeBorder(HushPalette.outline, style: StrokeStyle(lineWidth: 1, dash: [7, 7]))
                                         )
                                 )
@@ -83,13 +84,17 @@ struct EditPresetSheet: View {
                 if type == .pureTone || type == .drone {
                     source.toneFrequency = TonePreset.hz432.frequency
                 }
-                withAnimation(.easeInOut(duration: 0.3)) {
+                if reduceMotion {
                     sources.append(source)
+                } else {
+                    withAnimation(HushMotion.standard) { sources.append(source) }
                 }
             } onSelectAsset: { asset in
                 let source = SoundSource(asset: asset, volume: 0.5)
-                withAnimation(.easeInOut(duration: 0.3)) {
+                if reduceMotion {
                     sources.append(source)
+                } else {
+                    withAnimation(HushMotion.standard) { sources.append(source) }
                 }
             }
             .presentationDetents([.medium, .large])
@@ -105,6 +110,7 @@ private struct EditSourceRow: View {
     @Binding var sources: [SoundSource]
     @State private var volume: Float
     @State private var maskingStrength: Float
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     init(source: SoundSource, sources: Binding<[SoundSource]>) {
         self.source = source
@@ -142,14 +148,19 @@ private struct EditSourceRow: View {
                     .monospacedDigit()
 
                 Button {
-                    withAnimation(.easeInOut(duration: 0.3)) {
+                    if reduceMotion {
                         sources.removeAll { $0.id == source.id }
+                    } else {
+                        withAnimation(HushMotion.standard) {
+                            sources.removeAll { $0.id == source.id }
+                        }
                     }
                 } label: {
                     Image(systemName: "xmark")
                         .font(.caption.weight(.bold))
                 }
                 .buttonStyle(HushCircleButtonStyle())
+                .accessibilityLabel("Remove \(source.displayName)")
             }
 
             Slider(value: $volume, in: 0...1)
@@ -187,7 +198,8 @@ private struct EditSourceRow: View {
             }
         }
         .padding(18)
-        .hushPanel(radius: 26)
+        .hushPanel(radius: HushRadius.lg)
+        .accessibilityElement(children: .contain)
     }
 
     private var isBinauralType: Bool {

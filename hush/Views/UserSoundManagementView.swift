@@ -31,13 +31,31 @@ struct UserSoundManagementView: View {
             if let importerError {
                 VStack {
                     Spacer()
-                    Text(importerError)
-                        .font(.caption)
-                        .foregroundStyle(HushPalette.danger)
-                        .padding(12)
-                        .hushPanel(radius: 14)
-                        .padding(.horizontal, 20)
-                        .padding(.bottom, 24)
+                    HStack(spacing: 10) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.caption)
+                            .foregroundStyle(HushPalette.danger)
+                        Text(importerError)
+                            .font(.footnote)
+                            .foregroundStyle(HushPalette.textPrimary)
+                        Spacer(minLength: 8)
+                        Button {
+                            withAnimation(HushMotion.quick) { self.importerError = nil }
+                        } label: {
+                            Image(systemName: "xmark")
+                                .font(.caption.weight(.bold))
+                                .foregroundStyle(HushPalette.textSecondary)
+                                .frame(width: 44, height: 44)
+                                .contentShape(Rectangle())
+                        }
+                        .accessibilityLabel("Dismiss error")
+                    }
+                    .padding(.leading, 14)
+                    .padding(.vertical, 4)
+                    .padding(.trailing, 4)
+                    .hushPanel(radius: HushRadius.sm)
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 24)
                 }
                 .transition(.opacity)
             }
@@ -100,12 +118,12 @@ struct UserSoundManagementView: View {
     }
 
     @ViewBuilder private var emptyState: some View {
-        VStack(spacing: 14) {
+        VStack(spacing: 12) {
             Image(systemName: "music.note.list")
-                .font(.title)
+                .font(.title2)
                 .foregroundStyle(HushPalette.textSecondary)
             Text("No imported sounds yet")
-                .font(.system(.title3, design: .serif, weight: .semibold))
+                .font(.headline)
                 .foregroundStyle(HushPalette.textPrimary)
             Text("Tap + above or open the mixer to add audio files from your device.")
                 .font(.subheadline)
@@ -158,19 +176,14 @@ struct UserSoundManagementView: View {
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .hushPanel(radius: 18)
+        .hushPanel(radius: HushRadius.md)
     }
 
     private func showImporterError(_ message: String) {
-        withAnimation(.easeInOut(duration: 0.2)) {
+        withAnimation(HushMotion.quick) {
             importerError = message
         }
-        Task {
-            try? await Task.sleep(for: .seconds(3))
-            withAnimation(.easeInOut(duration: 0.2)) {
-                importerError = nil
-            }
-        }
+        // No auto-dismiss — user taps the inline close button. WCAG 2.2.1.
     }
 }
 
@@ -239,13 +252,13 @@ private struct AssetRow: View {
                 Image(systemName: "ellipsis")
                     .font(.subheadline.weight(.bold))
                     .foregroundStyle(HushPalette.textSecondary)
-                    .frame(width: 32, height: 32)
+                    .frame(width: 44, height: 44)
                     .contentShape(Rectangle())
             }
             .accessibilityLabel("More actions for \(asset.displayName)")
         }
         .padding(14)
-        .hushPanel(radius: 18)
+        .hushPanel(radius: HushRadius.md)
         .confirmationDialog(
             "Delete \(asset.displayName)?",
             isPresented: $showDeleteConfirmation,

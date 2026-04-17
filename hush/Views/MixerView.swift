@@ -30,23 +30,21 @@ struct MixerView: View {
     var body: some View {
         VStack(spacing: 14) {
             if viewModel.activeSources.isEmpty {
-                VStack(spacing: 12) {
+                VStack(spacing: 10) {
                     Image(systemName: "waveform.badge.plus")
-                        .font(.title)
+                        .font(.title2)
                         .foregroundStyle(HushPalette.textSecondary)
 
-                    Text("Build your own layer stack")
-                        .font(.system(.title3, design: .serif, weight: .semibold))
+                    Text("Empty mix")
+                        .font(.headline)
                         .foregroundStyle(HushPalette.textPrimary)
 
-                    Text("Add rain, noise, fire, or binaural beats and shape the mix with simple volume controls.")
+                    Text("Add a sound to start.")
                         .font(.subheadline)
                         .foregroundStyle(HushPalette.textSecondary)
-                        .multilineTextAlignment(.center)
-                        .lineSpacing(2)
                 }
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, 28)
+                .padding(.vertical, 24)
             } else {
                 ForEach(viewModel.activeSources) { source in
                     SourceRow(source: source, viewModel: viewModel)
@@ -67,10 +65,10 @@ struct MixerView: View {
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 16)
                     .background(
-                        RoundedRectangle(cornerRadius: 22, style: .continuous)
+                        RoundedRectangle(cornerRadius: HushRadius.md, style: .continuous)
                             .fill(HushPalette.surfaceRaised.opacity(0.76))
                             .overlay(
-                                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                                RoundedRectangle(cornerRadius: HushRadius.md, style: .continuous)
                                     .strokeBorder(HushPalette.outline, style: StrokeStyle(lineWidth: 1, dash: [7, 7]))
                             )
                     )
@@ -159,6 +157,7 @@ private struct SourceRow: View {
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(HushPalette.textSecondary)
                     .monospacedDigit()
+                    .accessibilityHidden(true)
 
                 Button {
                     viewModel.removeSource(source)
@@ -169,6 +168,11 @@ private struct SourceRow: View {
                 .buttonStyle(HushCircleButtonStyle())
                 .accessibilityLabel("Remove \(source.displayName)")
             }
+            // Combine the header row so VoiceOver announces one stop for the
+            // sound identity + its current level, then reaches Remove and the
+            // Slider as discrete actions below. Without this, VO pauses on
+            // the name, subtitle, and percentage as three separate elements.
+            .accessibilityElement(children: .contain)
 
             Slider(value: $volume, in: 0...1)
             .tint(HushPalette.accentSoft)
@@ -198,7 +202,7 @@ private struct SourceRow: View {
             }
         }
         .padding(18)
-        .hushPanel(radius: 26)
+        .hushPanel(radius: HushRadius.lg)
         .fileImporter(
             isPresented: $showRelinkPicker,
             allowedContentTypes: [.audio],
@@ -295,15 +299,34 @@ struct SoundPickerGrid: View {
                 if let importerError {
                     VStack {
                         Spacer()
-                        Text(importerError)
-                            .font(.caption)
-                            .foregroundStyle(HushPalette.danger)
-                            .padding(12)
-                            .hushPanel(radius: 14)
-                            .padding(.horizontal, 20)
-                            .padding(.bottom, 24)
+                        HStack(spacing: 10) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .font(.caption)
+                                .foregroundStyle(HushPalette.danger)
+                            Text(importerError)
+                                .font(.footnote)
+                                .foregroundStyle(HushPalette.textPrimary)
+                            Spacer(minLength: 8)
+                            Button {
+                                withAnimation(HushMotion.quick) { self.importerError = nil }
+                            } label: {
+                                Image(systemName: "xmark")
+                                    .font(.caption.weight(.bold))
+                                    .foregroundStyle(HushPalette.textSecondary)
+                                    .frame(width: 44, height: 44)
+                                    .contentShape(Rectangle())
+                            }
+                            .accessibilityLabel("Dismiss error")
+                        }
+                        .padding(.leading, 14)
+                        .padding(.vertical, 4)
+                        .padding(.trailing, 4)
+                        .hushPanel(radius: HushRadius.sm)
+                        .padding(.horizontal, 20)
+                        .padding(.bottom, 24)
                     }
                     .transition(.opacity)
+                    .accessibilityAddTraits(.isStaticText)
                 }
             }
             .navigationTitle("Add Sound")
@@ -346,7 +369,7 @@ struct SoundPickerGrid: View {
         VStack(alignment: .leading, spacing: 14) {
             VStack(alignment: .leading, spacing: 4) {
                 Text("My Sounds")
-                    .font(.system(.title2, design: .serif, weight: .semibold))
+                    .font(.title3.weight(.semibold))
                     .foregroundStyle(HushPalette.textPrimary)
 
                 Text("Audio you've imported from your device")
@@ -355,35 +378,13 @@ struct SoundPickerGrid: View {
             }
 
             LazyVGrid(columns: columns, spacing: 14) {
-                Button {
-                    showFileImporter = true
-                } label: {
-                    VStack(alignment: .leading, spacing: 14) {
-                        ZStack {
-                            Circle()
-                                .strokeBorder(HushPalette.outline, style: StrokeStyle(lineWidth: 1, dash: [4, 4]))
-                                .frame(width: 42, height: 42)
-                            Image(systemName: "plus")
-                                .font(.headline.weight(.bold))
-                                .foregroundStyle(HushPalette.accentSoft)
-                        }
-                        Text("Import sound")
-                            .font(.headline)
-                            .foregroundStyle(HushPalette.textPrimary)
-                            .multilineTextAlignment(.leading)
-                        Text("Pick a file from your device")
-                            .font(.caption)
-                            .foregroundStyle(HushPalette.textSecondary)
-                    }
-                    .frame(maxWidth: .infinity, minHeight: 142, alignment: .leading)
-                    .padding(16)
-                    .background(
-                        RoundedRectangle(cornerRadius: 26, style: .continuous)
-                            .fill(HushPalette.panelFillSoft)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 26, style: .continuous)
-                                    .strokeBorder(HushPalette.outline, style: StrokeStyle(lineWidth: 1, dash: [6, 6]))
-                            )
+                Button { showFileImporter = true } label: {
+                    SoundCardLabel(
+                        icon: "plus",
+                        iconTint: HushPalette.accentSoft,
+                        iconDashed: true,
+                        title: "Import sound",
+                        tag: "Pick a file from your device"
                     )
                 }
                 .buttonStyle(HushPressButtonStyle())
@@ -393,27 +394,11 @@ struct SoundPickerGrid: View {
                         onSelectAsset(asset)
                         dismiss()
                     } label: {
-                        VStack(alignment: .leading, spacing: 14) {
-                            ZStack {
-                                Circle()
-                                    .fill(HushPalette.raisedFill)
-                                    .frame(width: 42, height: 42)
-                                Image(systemName: asset.icon)
-                                    .font(.headline)
-                                    .foregroundStyle(HushPalette.textPrimary)
-                            }
-                            Text(asset.displayName)
-                                .font(.headline)
-                                .foregroundStyle(HushPalette.textPrimary)
-                                .multilineTextAlignment(.leading)
-                                .lineLimit(2)
-                            Text("Imported")
-                                .font(.caption)
-                                .foregroundStyle(HushPalette.textSecondary)
-                        }
-                        .frame(maxWidth: .infinity, minHeight: 142, alignment: .leading)
-                        .padding(16)
-                        .hushPanel(radius: 26)
+                        SoundCardLabel(
+                            icon: asset.icon,
+                            title: asset.displayName,
+                            tag: "Imported"
+                        )
                     }
                     .buttonStyle(HushPressButtonStyle())
                 }
@@ -422,13 +407,12 @@ struct SoundPickerGrid: View {
     }
 
     private func flashError(_ message: String) {
-        withAnimation(.easeInOut(duration: 0.2)) {
+        withAnimation(HushMotion.quick) {
             importerError = message
         }
-        Task {
-            try? await Task.sleep(for: .seconds(3))
-            withAnimation(.easeInOut(duration: 0.2)) { importerError = nil }
-        }
+        // No auto-dismiss — users may need time to read, and screen-reader
+        // users were cut off by the old 3-second timer. The inline dismiss
+        // button in the banner is the clear path out.
     }
 
     @ViewBuilder
@@ -442,7 +426,7 @@ struct SoundPickerGrid: View {
 
         VStack(alignment: .leading, spacing: 14) {
             Button {
-                withAnimation(.easeInOut(duration: 0.25)) {
+                withAnimation(HushMotion.standard) {
                     if isExpanded {
                         expandedCategories.remove(category)
                     } else {
@@ -458,7 +442,7 @@ struct SoundPickerGrid: View {
 
                     VStack(alignment: .leading, spacing: 2) {
                         Text(category.rawValue)
-                            .font(.system(.title3, design: .serif, weight: .semibold))
+                            .font(.headline)
                             .foregroundStyle(HushPalette.textPrimary)
 
                         Text("\(assets.count) sound\(assets.count == 1 ? "" : "s")")
@@ -483,29 +467,11 @@ struct SoundPickerGrid: View {
                             onSelectAsset(asset)
                             dismiss()
                         } label: {
-                            VStack(alignment: .leading, spacing: 14) {
-                                ZStack {
-                                    Circle()
-                                        .fill(HushPalette.raisedFill)
-                                        .frame(width: 42, height: 42)
-
-                                    Image(systemName: asset.icon)
-                                        .font(.headline)
-                                        .foregroundStyle(HushPalette.textPrimary)
-                                }
-
-                                Text(asset.displayName)
-                                    .font(.headline)
-                                    .foregroundStyle(HushPalette.textPrimary)
-                                    .multilineTextAlignment(.leading)
-
-                                Text("Recorded")
-                                    .font(.caption)
-                                    .foregroundStyle(HushPalette.textSecondary)
-                            }
-                            .frame(maxWidth: .infinity, minHeight: 142, alignment: .leading)
-                            .padding(16)
-                            .hushPanel(radius: 26)
+                            SoundCardLabel(
+                                icon: asset.icon,
+                                title: asset.displayName,
+                                tag: "Recorded"
+                            )
                         }
                         .buttonStyle(HushPressButtonStyle())
                     }
@@ -519,7 +485,7 @@ struct SoundPickerGrid: View {
         VStack(alignment: .leading, spacing: 14) {
             VStack(alignment: .leading, spacing: 4) {
                 Text(title)
-                    .font(.system(.title2, design: .serif, weight: .semibold))
+                    .font(.title3.weight(.semibold))
                     .foregroundStyle(HushPalette.textPrimary)
 
                 Text(subtitle)
@@ -533,29 +499,11 @@ struct SoundPickerGrid: View {
                         onSelect(type)
                         dismiss()
                     } label: {
-                        VStack(alignment: .leading, spacing: 14) {
-                            ZStack {
-                                Circle()
-                                    .fill(HushPalette.raisedFill)
-                                    .frame(width: 42, height: 42)
-
-                                Image(systemName: type.icon)
-                                    .font(.headline)
-                                    .foregroundStyle(HushPalette.textPrimary)
-                            }
-
-                            Text(type.rawValue)
-                                .font(.headline)
-                                .foregroundStyle(HushPalette.textPrimary)
-                                .multilineTextAlignment(.leading)
-
-                            Text("Synthetic")
-                                .font(.caption)
-                                .foregroundStyle(HushPalette.textSecondary)
-                        }
-                        .frame(maxWidth: .infinity, minHeight: 142, alignment: .leading)
-                        .padding(16)
-                        .hushPanel(radius: 26)
+                        SoundCardLabel(
+                            icon: type.icon,
+                            title: type.rawValue,
+                            tag: "Synthetic"
+                        )
                     }
                     .buttonStyle(HushPressButtonStyle())
                 }
@@ -564,10 +512,72 @@ struct SoundPickerGrid: View {
     }
 }
 
+/// Grid card used across the sound picker (imports, bundled assets, generated
+/// types). One shape, one padding, one panel radius — new rows shouldn't
+/// invent their own card treatment.
+private struct SoundCardLabel: View {
+    let icon: String
+    var iconTint: Color = HushPalette.textPrimary
+    var iconDashed: Bool = false
+    let title: String
+    let tag: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            ZStack {
+                if iconDashed {
+                    Circle()
+                        .strokeBorder(HushPalette.outline, style: StrokeStyle(lineWidth: 1, dash: [4, 4]))
+                        .frame(width: 42, height: 42)
+                } else {
+                    Circle()
+                        .fill(HushPalette.raisedFill)
+                        .frame(width: 42, height: 42)
+                }
+                Image(systemName: icon)
+                    .font(.headline)
+                    .foregroundStyle(iconTint)
+            }
+
+            Text(title)
+                .font(.headline)
+                .foregroundStyle(HushPalette.textPrimary)
+                .multilineTextAlignment(.leading)
+                .lineLimit(2)
+
+            Text(tag)
+                .font(.caption)
+                .foregroundStyle(HushPalette.textSecondary)
+        }
+        .frame(maxWidth: .infinity, minHeight: 142, alignment: .leading)
+        .padding(16)
+        .hushPanel(radius: HushRadius.lg)
+    }
+}
+
 // MARK: - Shared Pickers
 //
 // One set of controls used by both MixerView (live engine updates) and
 // EditPresetSheet (local state). Callers own the state and the write path.
+
+/// Shared chip style for picker rows. Kept local so picker sites stay
+/// declarative. Target height is 44pt to satisfy WCAG 2.5.8.
+private struct HushChipLabel: View {
+    let text: String
+    let isSelected: Bool
+
+    var body: some View {
+        Text(text)
+            .font(.footnote.weight(.semibold))
+            .foregroundStyle(isSelected ? HushPalette.textPrimary : HushPalette.textSecondary)
+            .padding(.horizontal, 14)
+            .frame(minHeight: 44)
+            .background(
+                Capsule()
+                    .fill(isSelected ? HushPalette.chipActive : HushPalette.chipMuted)
+            )
+    }
+}
 
 struct ToneFrequencyPicker: View {
     let selected: Float?
@@ -579,18 +589,10 @@ struct ToneFrequencyPicker: View {
                 ForEach(TonePreset.allCases) { preset in
                     let isSelected = selected == preset.frequency
                     Button { onSelect(preset.frequency) } label: {
-                        Text(preset.label)
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(isSelected ? HushPalette.textPrimary : HushPalette.textSecondary)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 7)
-                            .background(
-                                Capsule()
-                                    .fill(isSelected ? HushPalette.chipActive : HushPalette.chipMuted)
-                            )
+                        HushChipLabel(text: preset.label, isSelected: isSelected)
                     }
                     .buttonStyle(HushPressButtonStyle())
-                    .animation(.easeInOut(duration: 0.15), value: selected)
+                    .animation(HushMotion.quick, value: selected)
                 }
             }
         }
@@ -608,18 +610,10 @@ struct BinauralRangePicker: View {
                 ForEach(BinauralRange.allCases) { range in
                     let isSelected = selected == range
                     Button { onSelect(range) } label: {
-                        Text(range.rawValue)
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(isSelected ? HushPalette.textPrimary : HushPalette.textSecondary)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 7)
-                            .background(
-                                Capsule()
-                                    .fill(isSelected ? HushPalette.chipActive : HushPalette.chipMuted)
-                            )
+                        HushChipLabel(text: range.rawValue, isSelected: isSelected)
                     }
                     .buttonStyle(HushPressButtonStyle())
-                    .animation(.easeInOut(duration: 0.15), value: selected)
+                    .animation(HushMotion.quick, value: selected)
                 }
             }
         }

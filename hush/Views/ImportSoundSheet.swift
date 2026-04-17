@@ -130,7 +130,7 @@ struct ImportSoundSheet: View {
                 Spacer()
             }
             .padding(14)
-            .hushPanel(radius: 20)
+            .hushPanel(radius: HushRadius.md)
         }
     }
 
@@ -148,10 +148,10 @@ struct ImportSoundSheet: View {
                 .padding(.vertical, 14)
                 .padding(.horizontal, 16)
                 .background(
-                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    RoundedRectangle(cornerRadius: HushRadius.sm, style: .continuous)
                         .fill(HushPalette.raisedFill)
                         .overlay(
-                            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            RoundedRectangle(cornerRadius: HushRadius.sm, style: .continuous)
                                 .strokeBorder(HushPalette.outline, lineWidth: 1)
                         )
                 )
@@ -174,13 +174,13 @@ struct ImportSoundSheet: View {
                         } label: {
                             HStack(spacing: 6) {
                                 Image(systemName: cat.icon)
-                                    .font(.caption)
+                                    .font(.footnote)
                                 Text(cat.rawValue)
-                                    .font(.caption.weight(.semibold))
+                                    .font(.footnote.weight(.semibold))
                             }
                             .foregroundStyle(isSelected ? HushPalette.textPrimary : HushPalette.textSecondary)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 8)
+                            .padding(.horizontal, 14)
+                            .frame(minHeight: 44)
                             .background(
                                 Capsule()
                                     .fill(isSelected ? HushPalette.chipActive : HushPalette.chipMuted)
@@ -261,10 +261,10 @@ struct ImportSoundSheet: View {
                             crossfadeDurationMs = option.ms
                         } label: {
                             Text(option.label)
-                                .font(.caption.weight(.semibold))
+                                .font(.footnote.weight(.semibold))
                                 .foregroundStyle(isSelected ? HushPalette.textPrimary : HushPalette.textSecondary)
-                                .padding(.horizontal, 14)
-                                .padding(.vertical, 8)
+                                .padding(.horizontal, 16)
+                                .frame(minHeight: 44)
                                 .background(
                                     Capsule()
                                         .fill(isSelected ? HushPalette.chipActive : HushPalette.chipMuted)
@@ -278,7 +278,7 @@ struct ImportSoundSheet: View {
             }
         }
         .padding(16)
-        .hushPanel(radius: 20)
+        .hushPanel(radius: HushRadius.md)
     }
 
     @ViewBuilder private var limitationNote: some View {

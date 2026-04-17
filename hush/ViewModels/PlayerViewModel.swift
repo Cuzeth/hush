@@ -58,6 +58,34 @@ enum PlayerWarning: Identifiable, Equatable {
     }
 }
 
+/// Alert payload. Consolidating both alert kinds behind a single Identifiable
+/// payload lets us use one `.alert(...)` modifier — SwiftUI silently drops the
+/// second of two stacked alerts on the same scene.
+enum PlayerAlert: Identifiable, Equatable {
+    case audio(String)
+    case storage(String)
+
+    var id: String {
+        switch self {
+        case .audio: return "audio"
+        case .storage: return "storage"
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .audio: return "Audio Error"
+        case .storage: return "Storage Error"
+        }
+    }
+
+    var message: String {
+        switch self {
+        case .audio(let message), .storage(let message): return message
+        }
+    }
+}
+
 @MainActor
 @Observable
 final class PlayerViewModel {
@@ -73,6 +101,32 @@ final class PlayerViewModel {
     /// fallback. Distinct from `errorMessage` so the alert can be titled
     /// correctly ("Storage Error" vs "Audio Error").
     var storageFailureMessage: String?
+
+    /// Audio takes precedence when both fire in the same turn — audio errors
+    /// are recoverable in-session; storage errors are launch-time facts the
+    /// user can dismiss once.
+    var activeAlert: PlayerAlert? {
+        if let errorMessage { return .audio(errorMessage) }
+        if let storageFailureMessage { return .storage(storageFailureMessage) }
+        return nil
+    }
+
+    func dismissActiveAlert() {
+        if errorMessage != nil { errorMessage = nil; return }
+        storageFailureMessage = nil
+    }
+
+    /// Clears all in-memory playback state. Used by Settings → Reset to
+    /// return to a clean slate without tearing down the singleton ViewModel.
+    func clearSession() {
+        stop()
+        stopTimer()
+        activeSources = []
+        currentPreset = nil
+        activeWarning = nil
+        errorMessage = nil
+        storageFailureMessage = nil
+    }
 
     let timerState = TimerState()
     @ObservationIgnored private var timerTask: Task<Void, Never>?
@@ -93,7 +147,7 @@ final class PlayerViewModel {
     init() {
         engine.onBinauralHeadphonesDisconnected = { [weak self] in
             guard let self else { return }
-            withAnimation(.easeInOut(duration: 0.35)) {
+            withAnimation(HushMotion.slow) {
                 self.isPlaying = false
             }
             self.showWarning(.binauralRouteDisconnect)
@@ -101,7 +155,7 @@ final class PlayerViewModel {
 
         engine.onPlaybackStateChanged = { [weak self] playing in
             guard let self else { return }
-            withAnimation(.easeInOut(duration: 0.35)) {
+            withAnimation(HushMotion.slow) {
                 self.isPlaying = playing
             }
         }
@@ -170,7 +224,7 @@ final class PlayerViewModel {
     /// underlying problem is gone).
     private func clearMissingBannerIfShown() {
         guard case .missingUserSounds = activeWarning else { return }
-        withAnimation(.easeInOut(duration: 0.3)) {
+        withAnimation(HushMotion.standard) {
             activeWarning = nil
         }
     }
@@ -179,7 +233,7 @@ final class PlayerViewModel {
 
     func loadPreset(_ preset: Preset) {
         stop()
-        withAnimation(.easeInOut(duration: 0.35)) {
+        withAnimation(HushMotion.slow) {
             currentPreset = preset
             activeSources = preset.sources
         }
@@ -190,7 +244,7 @@ final class PlayerViewModel {
     func randomMix() {
         stop()
         let sources = pickRandomMixSources()
-        withAnimation(.easeInOut(duration: 0.35)) {
+        withAnimation(HushMotion.slow) {
             activeSources = sources
             currentPreset = nil
         }
@@ -245,7 +299,7 @@ final class PlayerViewModel {
 
     func handlePresetDeleted(_ preset: Preset) {
         if currentPreset?.id == preset.id {
-            withAnimation(.easeInOut(duration: 0.35)) {
+            withAnimation(HushMotion.slow) {
                 currentPreset = nil
             }
         }
@@ -269,7 +323,7 @@ final class PlayerViewModel {
             source.maskingStrength = 0.5
         }
 
-        withAnimation(.easeInOut(duration: 0.3)) {
+        withAnimation(HushMotion.standard) {
             activeSources.append(source)
         }
 
@@ -296,7 +350,7 @@ final class PlayerViewModel {
 
         let source = SoundSource(asset: asset, volume: 1.0)
 
-        withAnimation(.easeInOut(duration: 0.3)) {
+        withAnimation(HushMotion.standard) {
             activeSources.append(source)
         }
 
@@ -308,7 +362,7 @@ final class PlayerViewModel {
 
     func removeSource(_ source: SoundSource) {
         engine.removeSource(id: source.id)
-        withAnimation(.easeInOut(duration: 0.3)) {
+        withAnimation(HushMotion.standard) {
             activeSources.removeAll { $0.id == source.id }
         }
         // If the user just removed the last source pointing at a missing
@@ -401,14 +455,14 @@ final class PlayerViewModel {
     /// Surface a warning as a banner. If a banner is already shown, replaces it
     /// with the new one (the most recent cause is always the most relevant).
     func showWarning(_ warning: PlayerWarning) {
-        withAnimation(.easeInOut(duration: 0.3)) {
+        withAnimation(HushMotion.standard) {
             activeWarning = warning
         }
     }
 
     func dismissWarning() {
         let dismissed = activeWarning
-        withAnimation(.easeInOut(duration: 0.3)) {
+        withAnimation(HushMotion.standard) {
             activeWarning = nil
         }
         // Once-ever beat-safety bookkeeping: only count the warning as "seen"
@@ -437,7 +491,7 @@ final class PlayerViewModel {
         engine.currentPresetName = currentPreset?.name ?? "Custom Mix"
         engine.currentPresetIcon = currentPreset?.icon
         engine.start()
-        withAnimation(.easeInOut(duration: 0.35)) {
+        withAnimation(HushMotion.slow) {
             isPlaying = true
         }
         applyTimerFadeIfNeeded()
@@ -445,7 +499,7 @@ final class PlayerViewModel {
 
     func stop() {
         engine.stop()
-        withAnimation(.easeInOut(duration: 0.35)) {
+        withAnimation(HushMotion.slow) {
             isPlaying = false
         }
     }
