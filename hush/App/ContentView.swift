@@ -1,5 +1,6 @@
 import SwiftUI
 import SwiftData
+import UIKit
 
 struct ContentView: View {
     @State private var viewModel = PlayerViewModel()
@@ -35,7 +36,6 @@ struct ContentView: View {
                 }
             }
         }
-        .preferredColorScheme(appearance.colorScheme)
         .onAppear {
             AudioEngine.shared.configureAudioSession()
             viewModel.bindUserSoundLibrary(userSoundLibrary)
@@ -49,9 +49,33 @@ struct ContentView: View {
                 }
             }
             viewModel.handleScenePhaseChange(.active)
+            applyAppearance(appearance)
         }
         .onChange(of: scenePhase) { _, newPhase in
             viewModel.handleScenePhaseChange(newPhase)
+            if newPhase == .active { applyAppearance(appearance) }
+        }
+        .onChange(of: appearanceRaw) { _, _ in
+            applyAppearance(appearance)
+        }
+    }
+
+    /// Propagate the user's appearance choice to every window in the active
+    /// scene via `overrideUserInterfaceStyle`. Plain `.preferredColorScheme`
+    /// on the root view doesn't cross into sheet presentations, which is why
+    /// flipping the picker in Settings used to require closing the sheet.
+    private func applyAppearance(_ appearance: Appearance) {
+        let style: UIUserInterfaceStyle
+        switch appearance {
+        case .system: style = .unspecified
+        case .light: style = .light
+        case .dark: style = .dark
+        }
+        for scene in UIApplication.shared.connectedScenes {
+            guard let windowScene = scene as? UIWindowScene else { continue }
+            for window in windowScene.windows {
+                window.overrideUserInterfaceStyle = style
+            }
         }
     }
 }
