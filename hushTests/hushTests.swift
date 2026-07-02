@@ -2405,6 +2405,233 @@ struct ImportCategoryGuessTests {
     }
 }
 
+// MARK: - Built-In Preset Identity Tests
+
+@MainActor
+struct PresetIdentityTests {
+
+    @Test func builtInIDsAreUnique() {
+        let ids = Preset.builtIn.map(\.id)
+        #expect(Set(ids).count == ids.count)
+    }
+
+    /// Hide/rename/edit persistence keys on these UUIDs across launches, so
+    /// they must be hardcoded and never change. Pinning the exact values
+    /// turns an accidental regeneration (the original bug: `var id = UUID()`
+    /// minted fresh IDs every launch) into a test failure instead of silent
+    /// data loss.
+    @Test func builtInIDsAreStableHardcodedValues() {
+        let expected: [String: String] = [
+            "Focus": "9689D977-9B4E-4012-9265-6E83CAB21596",
+            "Deep Work": "DA3A53E0-001C-44A4-9933-A7CA40742B75",
+            "Sleep": "B09470AB-8773-47A8-B3F9-5A7ED57F382F",
+            "Calm": "6261F106-4DB0-40B0-9402-12022A724305",
+            "Storm": "844BE7D2-F450-4FFC-8DB6-69AAC670D4D1",
+            "Speech Mask": "85BF37DD-A998-4E6F-87E0-D0C72C10FA43",
+            "Gamma Focus": "9C4DFB9E-B150-4F11-90A1-7397A6E46ECC",
+            "Coffee Shop": "8B1ECE4B-7261-4607-8A58-521AAE1BE7F0",
+            "Rainy Day": "2CA054C9-B389-4C55-8EB2-44B3FDB4017E",
+            "Forest": "9AEED8A8-1B77-4A4D-9060-100C369FAC2D",
+            "Cozy": "23619273-4D24-49F5-BF09-CDBD0676A895",
+        ]
+        #expect(Preset.builtIn.count == expected.count)
+        for preset in Preset.builtIn {
+            #expect(preset.id.uuidString == expected[preset.name],
+                    "Built-in \(preset.name) must keep its hardcoded stable ID")
+        }
+    }
+}
+
+// MARK: - Session Snapshot Tests
+
+@MainActor
+struct SessionSnapshotTests {
+
+    private static let sessionKey = "lastSessionSources"
+
+    @Test func roundTripKeepsPresetIdentity() {
+        UserDefaults.standard.removeObject(forKey: Self.sessionKey)
+        defer { UserDefaults.standard.removeObject(forKey: Self.sessionKey) }
+
+        // Cozy is samples-only — restoring it must not trip beat warnings.
+        let preset = Preset.builtIn.first { $0.name == "Cozy" }!
+        let vm = PlayerViewModel()
+        vm.currentPreset = preset
+        vm.activeSources = preset.sources
+        vm.saveLastSession()
+
+        let restored = PlayerViewModel()
+        #expect(restored.restoreLastSession())
+        #expect(restored.currentPreset?.id == preset.id,
+                "Named scene must survive relaunch instead of degrading to Custom Mix")
+        #expect(restored.currentPreset?.name == preset.name)
+        #expect(restored.activeSources.map(\.id) == preset.sources.map(\.id))
+    }
+
+    @Test func legacyBareArrayPayloadStillRestores() throws {
+        UserDefaults.standard.removeObject(forKey: Self.sessionKey)
+        defer { UserDefaults.standard.removeObject(forKey: Self.sessionKey) }
+
+        // Pre-snapshot builds stored a bare [SoundSource] under the same key.
+        let legacy = [SoundSource(type: .brownNoise, volume: 0.4)]
+        UserDefaults.standard.set(try JSONEncoder().encode(legacy), forKey: Self.sessionKey)
+
+        let vm = PlayerViewModel()
+        #expect(vm.restoreLastSession())
+        #expect(vm.currentPreset == nil)
+        #expect(vm.activeSources.count == 1)
+        #expect(vm.activeSources.first?.type == .brownNoise)
+    }
+
+    @Test func restoreClampsToMaxSources() {
+        UserDefaults.standard.removeObject(forKey: Self.sessionKey)
+        defer { UserDefaults.standard.removeObject(forKey: Self.sessionKey) }
+
+        let vm = PlayerViewModel()
+        vm.activeSources = (0..<10).map { _ in SoundSource(type: .whiteNoise, volume: 0.5) }
+        vm.saveLastSession()
+
+        let restored = PlayerViewModel()
+        #expect(restored.restoreLastSession())
+        #expect(restored.activeSources.count == AudioConstants.maxSimultaneousSources)
+    }
+
+    @Test func corruptPayloadReturnsFalse() {
+        UserDefaults.standard.removeObject(forKey: Self.sessionKey)
+        defer { UserDefaults.standard.removeObject(forKey: Self.sessionKey) }
+
+        UserDefaults.standard.set(Data("not json".utf8), forKey: Self.sessionKey)
+        #expect(PlayerViewModel().restoreLastSession() == false)
+    }
+
+    @Test func emptySessionReturnsFalse() {
+        UserDefaults.standard.removeObject(forKey: Self.sessionKey)
+        defer { UserDefaults.standard.removeObject(forKey: Self.sessionKey) }
+
+        let vm = PlayerViewModel()
+        vm.activeSources = []
+        vm.saveLastSession()
+        #expect(PlayerViewModel().restoreLastSession() == false)
+    }
+}
+
+// MARK: - Warning Queue Tests
+
+@MainActor
+struct WarningQueueTests {
+
+    private static let beatSafetyKey = "hasSeenBeatSafetyWarning"
+
+    @Test func displacedWarningResurfacesOnDismiss() {
+        UserDefaults.standard.removeObject(forKey: Self.beatSafetyKey)
+        defer { UserDefaults.standard.removeObject(forKey: Self.beatSafetyKey) }
+
+        // The addSource ordering: headphones advice fires first, then the
+        // one-shot beat-safety note replaces it in the same turn. The
+        // headphones banner used to be destroyed before rendering a frame.
+        let vm = PlayerViewModel()
+        vm.showWarning(.headphonesRecommended)
+        vm.showWarning(.beatSafety)
+        #expect(vm.activeWarning == .beatSafety)
+
+        vm.dismissWarning()
+        #expect(vm.activeWarning == .headphonesRecommended,
+                "Displaced warning must come back after the replacement is dismissed")
+
+        vm.dismissWarning()
+        #expect(vm.activeWarning == nil)
+    }
+
+    @Test func reshowingSameWarningDoesNotQueueDuplicate() {
+        let vm = PlayerViewModel()
+        vm.showWarning(.headphonesRecommended)
+        vm.showWarning(.headphonesRecommended)
+        vm.dismissWarning()
+        #expect(vm.activeWarning == nil)
+    }
+
+    @Test func reshowingQueuedWarningRemovesItFromQueue() {
+        let vm = PlayerViewModel()
+        vm.showWarning(.headphonesRecommended)
+        vm.showWarning(.binauralRouteDisconnect)   // headphones → queue
+        vm.showWarning(.headphonesRecommended)     // back on top; must not duplicate
+
+        vm.dismissWarning()
+        #expect(vm.activeWarning == .binauralRouteDisconnect)
+        vm.dismissWarning()
+        #expect(vm.activeWarning == nil)
+    }
+}
+
+// MARK: - Timer Restore Tests
+
+@MainActor
+struct TimerRestoreTests {
+
+    @Test func progressClampsWhenRemainingExceedsDuration() {
+        let state = TimerState()
+        state.selectedDuration = 600
+        // Restored endDate further out than the (defaulted) duration.
+        state.remainingSeconds = 900
+        #expect(state.progress == 0, "The ring can't draw negative progress")
+    }
+
+    @Test func restoreWithoutDurationKeyDerivesSaneDuration() {
+        let defaults = UserDefaults.standard
+        defaults.removeObject(forKey: "timerDuration")
+        defaults.set(Date().addingTimeInterval(3600), forKey: "timerEndDate")
+        defer {
+            defaults.removeObject(forKey: "timerEndDate")
+            defaults.removeObject(forKey: "timerDuration")
+        }
+
+        // Init restores the persisted timer; a missing duration key used to
+        // fall back to 25 minutes, sending progress negative for the
+        // remaining 35.
+        let vm = PlayerViewModel()
+        defer { vm.stopTimer() }
+
+        #expect(vm.timerState.isRunning)
+        #expect(vm.timerState.selectedDuration >= 3599)
+        #expect(vm.timerState.progress >= 0)
+    }
+}
+
+// MARK: - Volume Ramp Tests
+
+struct VolumeRampTests {
+
+    @Test func firstBufferSnapsToTarget() {
+        var ramp = VolumeRamp()
+        let (gain, step) = ramp.step(toward: 0.8, frameCount: 512)
+        #expect(gain == 0.8)
+        #expect(step == 0)
+    }
+
+    @Test func changeRampsAcrossBufferAndLandsOnTarget() {
+        var ramp = VolumeRamp()
+        _ = ramp.step(toward: 1.0, frameCount: 512)
+
+        let frames = 256
+        let (gain, step) = ramp.step(toward: 0.25, frameCount: frames)
+        #expect(gain == 1.0, "Ramp starts where the previous buffer ended")
+        #expect(abs(gain + step * Float(frames) - 0.25) < 0.0001,
+                "Applying the step across the buffer must land on the target")
+
+        let (next, nextStep) = ramp.step(toward: 0.25, frameCount: frames)
+        #expect(next == 0.25)
+        #expect(nextStep == 0)
+    }
+
+    @Test func rampToZeroReachesSilence() {
+        // Removal path: engine sets volume 0 and detaches after the ramp.
+        var ramp = VolumeRamp()
+        _ = ramp.step(toward: 0.6, frameCount: 128)
+        let (gain, step) = ramp.step(toward: 0, frameCount: 128)
+        #expect(abs(gain + step * 128) < 0.0001)
+    }
+}
+
 // MARK: - Test Env Extensions
 
 extension TestEnv {
