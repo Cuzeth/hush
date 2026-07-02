@@ -67,6 +67,10 @@ struct TimerView: View {
                     Text(viewModel.timerState.displayTime)
                         .font(.system(size: countdownFontSize, weight: .semibold, design: .monospaced))
                         .foregroundStyle(HushPalette.textPrimary)
+                        .lineLimit(1)
+                        // The ring is a fixed circle; at accessibility type
+                        // sizes the scaled countdown must shrink, not clip.
+                        .minimumScaleFactor(0.5)
                         .contentTransition(reduceMotion ? .identity : .numericText())
 
                     Text(viewModel.timerState.isFadingOut ? "Fading out now" : "Timer running")
@@ -166,6 +170,8 @@ struct TimerView: View {
                     set: { customMinutes = Int($0) }
                 ), in: 1...180, step: 1)
                 .tint(HushPalette.accentSoft)
+                .accessibilityLabel("Custom duration")
+                .accessibilityValue("\(customMinutes) minutes")
                 // Subtle click at every 5-minute detent — enough to feel
                 // tactile without being noisy.
                 .sensoryFeedback(.selection, trigger: customMinutes / 5)

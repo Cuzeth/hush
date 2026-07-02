@@ -1,3 +1,4 @@
+import Accessibility
 import SwiftUI
 import SwiftData
 import AVFoundation
@@ -16,6 +17,7 @@ struct SettingsView: View {
     @State private var showCredits = false
     @State private var showResetConfirmation = false
     @State private var isResetting = false
+    @State private var builtInsRestored = false
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
@@ -68,12 +70,29 @@ struct SettingsView: View {
                         }
                     }
 
-                    Section("Presets") {
-                        Button("Restore Built-In Presets") {
+                    Section {
+                        Button {
                             UserDefaults.standard.removeObject(forKey: "hiddenBuiltInPresets")
                             UserDefaults.standard.removeObject(forKey: "renamedBuiltInPresets")
+                            withAnimation(HushMotion.quick) { builtInsRestored = true }
+                            AccessibilityNotification.Announcement("Built-in scenes restored").post()
+                        } label: {
+                            HStack {
+                                Text("Restore Built-In Presets")
+                                Spacer()
+                                if builtInsRestored {
+                                    Image(systemName: "checkmark")
+                                        .foregroundStyle(HushPalette.accentSoft)
+                                }
+                            }
                         }
                         .foregroundStyle(HushPalette.accentSoft)
+                    } header: {
+                        Text("Presets")
+                    } footer: {
+                        if builtInsRestored {
+                            Text("Hidden and renamed built-in scenes are back to their originals.")
+                        }
                     }
 
                     importedSoundsSection
@@ -122,7 +141,7 @@ struct SettingsView: View {
                         HStack {
                             Text("Version")
                             Spacer()
-                            Text("1.0")
+                            Text(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—")
                                 .foregroundStyle(HushPalette.textSecondary)
                         }
                         HStack {
@@ -223,7 +242,7 @@ struct SettingsView: View {
 
     private var resetOverlay: some View {
         ZStack {
-            Color.black.opacity(0.55)
+            HushPalette.scrim
                 .ignoresSafeArea()
 
             VStack(spacing: 14) {
@@ -252,20 +271,24 @@ struct SettingsView: View {
         // when it re-renders into Onboarding.
         viewModel.clearSession()
 
-        // Delete all saved presets and imported sound records
+        // Delete all saved presets
         let presetDescriptor = FetchDescriptor<SavedPreset>()
         if let savedPresets = try? modelContext.fetch(presetDescriptor) {
             for preset in savedPresets { modelContext.delete(preset) }
         }
-        let importDescriptor = FetchDescriptor<UserSoundAsset>()
-        if let imports = try? modelContext.fetch(importDescriptor) {
-            for asset in imports { modelContext.delete(asset) }
-        }
         try? modelContext.save()
 
-        // Wipe the on-disk audio files so storage doesn't leak past the reset.
+        // Imported sounds go through the library, which owns its own
+        // ModelContext and cached snapshot — deleting the records on this
+        // view's context would leave the library resolving dead assets.
+        userSoundLibrary.resetAll()
+
+        // Sweep stray files the records didn't know about (crashed
+        // half-imports), then recreate the empty directory so a later
+        // import in this same process doesn't fail its copy.
         let userSoundsDir = UserSoundLibrary.defaultStorageDirectory()
         try? FileManager.default.removeItem(at: userSoundsDir)
+        try? FileManager.default.createDirectory(at: userSoundsDir, withIntermediateDirectories: true)
 
         // Nuke all UserDefaults for the app
         if let bundleID = Bundle.main.bundleIdentifier {

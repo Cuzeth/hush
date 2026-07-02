@@ -8,6 +8,15 @@ enum AudioConstants {
     nonisolated static let maxSimultaneousSources = 6
     nonisolated static let crossfadeDurationMs: Double = 100.0
     nonisolated static let preferredIOBufferFrameCount: Double = 2048.0
+    /// Ceiling on the transient memory a single sample decode may allocate
+    /// (source + converted PCM buffers). The import duration cap alone
+    /// doesn't bound memory: a 600 s stereo file declaring 192 kHz in its
+    /// header would decode to ~1 GB and get the app jetsam-killed. 500 MB
+    /// admits every sane ambient file (10 min of 48 kHz stereo Float32 is
+    /// ~230 MB) while rejecting the pathological ones. Checked at import
+    /// (UserSoundLibrary) and again at load (SampleLoopPlayer), since files
+    /// are re-read from disk on every playback.
+    nonisolated static let maxDecodedSampleBytes: Double = 500_000_000
 }
 
 enum BinauralRange: String, CaseIterable, Identifiable, Codable {
@@ -36,12 +45,15 @@ enum BinauralRange: String, CaseIterable, Identifiable, Codable {
         }
     }
 
+    // Describe the sound, not a promised effect — outcome claims
+    // ("Peak Cognition") read as health benefits, which the app
+    // deliberately doesn't make (see the Settings disclaimer).
     nonisolated var description: String {
         switch self {
-        case .alpha: return "Calm Focus (8-13 Hz)"
-        case .smr: return "Sweet Spot (12-15 Hz)"
-        case .beta: return "Alertness (13-30 Hz)"
-        case .gamma: return "Peak Cognition (38-42 Hz)"
+        case .alpha: return "Slow pulse (8-13 Hz)"
+        case .smr: return "Gentle pulse (12-15 Hz)"
+        case .beta: return "Steady pulse (13-30 Hz)"
+        case .gamma: return "Fast shimmer (38-42 Hz)"
         }
     }
 }

@@ -37,6 +37,11 @@ struct ImportSoundSheet: View {
     /// Retained so the AVAudioPlayer delegate (which AVFoundation holds
     /// weakly) stays alive long enough to fire `audioPlayerDidFinishPlaying`.
     @State private var previewObserver: PreviewObserver?
+    /// Balances start/stopAccessingSecurityScopedResource for the preview.
+    /// Foundation refcounts scope access per URL — an unmatched stop (e.g.
+    /// onDisappear firing after the finish delegate already released) could
+    /// revoke the separate access commit() holds mid-import.
+    @State private var isHoldingPreviewScope = false
 
     private static let iconChoices: [String] = [
         "music.note", "waveform", "speaker.wave.2.fill", "headphones",
@@ -233,7 +238,8 @@ struct ImportSoundSheet: View {
                 )
         }
         .buttonStyle(HushPressButtonStyle())
-        .accessibilityLabel(isCategoryDefault ? "Use category icon" : "Icon \(renderedSymbol)")
+        .accessibilityLabel(isCategoryDefault ? "Use category icon" : HushSymbolName.label(for: renderedSymbol))
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
     @ViewBuilder private var crossfadeSection: some View {
@@ -260,17 +266,10 @@ struct ImportSoundSheet: View {
                         Button {
                             crossfadeDurationMs = option.ms
                         } label: {
-                            Text(option.label)
-                                .font(.footnote.weight(.semibold))
-                                .foregroundStyle(isSelected ? HushPalette.textPrimary : HushPalette.textSecondary)
-                                .padding(.horizontal, 16)
-                                .frame(minHeight: 44)
-                                .background(
-                                    Capsule()
-                                        .fill(isSelected ? HushPalette.chipActive : HushPalette.chipMuted)
-                                )
+                            HushChipLabel(text: option.label, isSelected: isSelected)
                         }
                         .buttonStyle(HushPressButtonStyle())
+                        .accessibilityAddTraits(isSelected ? .isSelected : [])
                     }
                     Spacer()
                 }
@@ -333,6 +332,7 @@ struct ImportSoundSheet: View {
                 previewError = "Couldn't access this file."
                 return
             }
+            isHoldingPreviewScope = true
             url = sourceURL
         case .edit(let asset):
             url = library.url(for: asset)
@@ -350,11 +350,14 @@ struct ImportSoundSheet: View {
                 if case .newImport(let url) = mode { return url }
                 return nil
             }()
-            let observer = PreviewObserver { [_isPreviewing, _previewPlayer, scopedURL] in
+            let observer = PreviewObserver { [_isPreviewing, _previewPlayer, _isHoldingPreviewScope, scopedURL] in
                 _previewPlayer.wrappedValue?.stop()
                 _previewPlayer.wrappedValue = nil
                 _isPreviewing.wrappedValue = false
-                scopedURL?.stopAccessingSecurityScopedResource()
+                if _isHoldingPreviewScope.wrappedValue {
+                    _isHoldingPreviewScope.wrappedValue = false
+                    scopedURL?.stopAccessingSecurityScopedResource()
+                }
             }
             player.delegate = observer
             previewObserver = observer
@@ -364,9 +367,7 @@ struct ImportSoundSheet: View {
             isPreviewing = true
         } catch {
             previewError = "Couldn't play this file."
-            if case .newImport(let sourceURL) = mode {
-                sourceURL.stopAccessingSecurityScopedResource()
-            }
+            releasePreviewScopeIfHeld()
         }
     }
 
@@ -375,6 +376,12 @@ struct ImportSoundSheet: View {
         previewPlayer = nil
         previewObserver = nil
         isPreviewing = false
+        releasePreviewScopeIfHeld()
+    }
+
+    private func releasePreviewScopeIfHeld() {
+        guard isHoldingPreviewScope else { return }
+        isHoldingPreviewScope = false
         if case .newImport(let sourceURL) = mode {
             sourceURL.stopAccessingSecurityScopedResource()
         }

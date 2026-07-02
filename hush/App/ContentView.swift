@@ -18,6 +18,9 @@ struct ContentView: View {
     /// even though `.onAppear` can re-fire when the Group switches between
     /// OnboardingView and PlayerView (or on scene resume).
     @State private var storageFailureSurfaced = false
+    /// Same one-shot treatment for auto-resume: a re-fired onAppear must not
+    /// overwrite a session the user has since paused or changed.
+    @State private var autoResumeAttempted = false
 
     init(storageFailureMessage: String? = nil) {
         self.storageFailureMessage = storageFailureMessage
@@ -28,11 +31,8 @@ struct ContentView: View {
             if hasCompletedOnboarding {
                 PlayerView(viewModel: viewModel)
             } else {
-                OnboardingView { selectedPreset in
+                OnboardingView {
                     hasCompletedOnboarding = true
-                    if let preset = selectedPreset {
-                        viewModel.loadPreset(preset)
-                    }
                 }
             }
         }
@@ -43,7 +43,8 @@ struct ContentView: View {
                 viewModel.storageFailureMessage = storageFailureMessage
                 storageFailureSurfaced = true
             }
-            if hasCompletedOnboarding && autoResumeLast {
+            if hasCompletedOnboarding && autoResumeLast && !autoResumeAttempted {
+                autoResumeAttempted = true
                 if viewModel.restoreLastSession() {
                     viewModel.play()
                 }

@@ -942,7 +942,7 @@ struct SoundCategoryTests {
 struct SoundSourceTests {
 
     @Test func codableRoundTrip() throws {
-        let source = SoundSource(type: .brownNoise, volume: 0.7, isActive: true,
+        let source = SoundSource(type: .brownNoise, volume: 0.7,
                                   binauralRange: .alpha, binauralFrequency: 10,
                                   toneFrequency: 432, assetID: nil)
 
@@ -951,7 +951,6 @@ struct SoundSourceTests {
 
         #expect(decoded.type == source.type)
         #expect(decoded.volume == source.volume)
-        #expect(decoded.isActive == source.isActive)
         #expect(decoded.binauralRange == source.binauralRange)
         #expect(decoded.binauralFrequency == source.binauralFrequency)
         #expect(decoded.toneFrequency == source.toneFrequency)
@@ -986,7 +985,6 @@ struct SoundSourceTests {
         #expect(source.type == .sampleAsset)
         #expect(source.assetID == asset.id)
         #expect(source.volume == 0.9)
-        #expect(source.isActive == true)
     }
 
     @Test func resolvedAssetForLegacyType() {
@@ -1462,9 +1460,15 @@ struct SoundSourceEdgeCaseTests {
         #expect(source.resolvedAsset == nil)
     }
 
-    @Test func defaultIsActiveIsTrue() {
-        let source = SoundSource(type: .whiteNoise, volume: 0.5)
-        #expect(source.isActive == true)
+    @Test func decodesLegacyPayloadWithRemovedIsActiveKey() throws {
+        // Older builds persisted an `isActive` field; its removal must not
+        // break decoding of previously saved presets and sessions.
+        let json = Data("""
+        {"id":"1B671A64-40D5-491E-99B0-DA01FF1F3341","type":"White Noise","volume":0.5,"isActive":false}
+        """.utf8)
+        let decoded = try JSONDecoder().decode(SoundSource.self, from: json)
+        #expect(decoded.type == .whiteNoise)
+        #expect(decoded.volume == 0.5)
     }
 }
 

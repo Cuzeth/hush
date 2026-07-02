@@ -12,6 +12,7 @@ enum UserSoundImportError: LocalizedError, Equatable {
     case tooShort(seconds: Double)
     case tooLong(seconds: Double, maxSeconds: Double)
     case tooLarge(maxBytes: Int64)
+    case decodedTooLarge
     case duplicate(existingDisplayName: String)
     case copyFailed
     case unknown
@@ -32,6 +33,8 @@ enum UserSoundImportError: LocalizedError, Equatable {
         case .tooLarge(let maxBytes):
             let mb = Int(maxBytes / 1_000_000)
             return "Sound is too large. Pick a file under \(mb) MB."
+        case .decodedTooLarge:
+            return "This sound would use too much memory to play. Try a shorter clip or a lower sample rate."
         case .duplicate(let existing):
             return "You've already imported this sound as \"\(existing)\"."
         case .copyFailed:
@@ -201,7 +204,16 @@ final class UserSoundLibrary {
         )
 
         modelContext.insert(record)
-        try? modelContext.save()
+        do {
+            try modelContext.save()
+        } catch {
+            // Without the record the copied file is orphaned and the user
+            // was told the import succeeded while it vanishes next launch.
+            Self.logger.error("Import save failed: \(error.localizedDescription)")
+            modelContext.delete(record)
+            try? FileManager.default.removeItem(at: destination)
+            throw UserSoundImportError.copyFailed
+        }
         refresh()
 
         Self.logger.info("Imported user sound: \(resolvedName) [\(record.assetID)]")
@@ -212,7 +224,7 @@ final class UserSoundLibrary {
 
     func update(_ asset: UserSoundAsset, mutate: (UserSoundAsset) -> Void) {
         mutate(asset)
-        try? modelContext.save()
+        saveContext("update")
         refresh()
     }
 
@@ -220,7 +232,21 @@ final class UserSoundLibrary {
         let url = url(for: asset)
         try? FileManager.default.removeItem(at: url)
         modelContext.delete(asset)
-        try? modelContext.save()
+        saveContext("delete")
+        refresh()
+    }
+
+    /// Deletes every imported sound — files and records — and refreshes the
+    /// cache. Settings → Reset must go through this rather than deleting
+    /// records on the view's ModelContext: this library holds its own
+    /// context, and its snapshot would otherwise keep resolving (and
+    /// reporting missing) assets the user deliberately erased.
+    func resetAll() {
+        for asset in assetsByID.values {
+            try? FileManager.default.removeItem(at: url(for: asset))
+            modelContext.delete(asset)
+        }
+        saveContext("resetAll")
         refresh()
     }
 
@@ -261,7 +287,12 @@ final class UserSoundLibrary {
         // be flagged as a duplicate of this asset, naming a file that no
         // longer corresponds to its data.
         asset.contentHash = Self.hashFilePrefix(at: sourceURL)
-        try? modelContext.save()
+        do {
+            try modelContext.save()
+        } catch {
+            Self.logger.error("Relink save failed: \(error.localizedDescription)")
+            throw UserSoundImportError.copyFailed
+        }
         refresh()
     }
 
@@ -281,7 +312,7 @@ final class UserSoundLibrary {
             }
             if !exists { missing.append(asset) }
         }
-        try? modelContext.save()
+        saveContext("verify")
         return missing
     }
 
@@ -298,8 +329,14 @@ final class UserSoundLibrary {
     /// `relink`. Throws the user-facing error; the size check runs first so
     /// we never parse a file we're going to reject anyway.
     private func validateAudioSource(at sourceURL: URL) throws -> AudioProbe {
-        if let size = (try? FileManager.default.attributesOfItem(atPath: sourceURL.path)[.size] as? Int64),
-           size > maximumImportFileSizeBytes {
+        // Fail closed: an unreadable size must not skip the cap (the old
+        // `if let` silently waved the file through). Resolve symlinks first
+        // so the check measures the real file, not the link.
+        let resolvedURL = sourceURL.resolvingSymlinksInPath()
+        guard let size = (try? FileManager.default.attributesOfItem(atPath: resolvedURL.path))?[.size] as? Int64 else {
+            throw UserSoundImportError.unreadable
+        }
+        if size > maximumImportFileSizeBytes {
             throw UserSoundImportError.tooLarge(maxBytes: maximumImportFileSizeBytes)
         }
 
@@ -311,8 +348,17 @@ final class UserSoundLibrary {
             throw UserSoundImportError.unreadable
         }
 
+        // Header metadata is untrusted. Frame counts must fit
+        // AVAudioFrameCount (UInt32) — SampleLoopPlayer converts on every
+        // playback, and a trapping conversion there is a persistent crash
+        // loop once the sound is in a session.
         let format = file.processingFormat
-        guard format.sampleRate > 0 else { throw UserSoundImportError.unsupportedFormat }
+        guard format.sampleRate > 0,
+              format.channelCount > 0,
+              file.length > 0,
+              AVAudioFrameCount(exactly: file.length) != nil else {
+            throw UserSoundImportError.unsupportedFormat
+        }
 
         let duration = Double(file.length) / format.sampleRate
         guard duration >= Self.minimumDurationSeconds else {
@@ -320,6 +366,15 @@ final class UserSoundLibrary {
         }
         guard duration <= Self.maximumDurationSeconds else {
             throw UserSoundImportError.tooLong(seconds: duration, maxSeconds: Self.maximumDurationSeconds)
+        }
+
+        // Decoded-size budget, mirroring SampleLoopPlayer's load-time check:
+        // the duration cap alone doesn't bound memory when the header
+        // declares an extreme sample rate.
+        let estimatedDecodedBytes = Double(file.length) * Double(format.channelCount) * 4
+        guard estimatedDecodedBytes.isFinite,
+              estimatedDecodedBytes <= AudioConstants.maxDecodedSampleBytes else {
+            throw UserSoundImportError.decodedTooLarge
         }
         return AudioProbe(file: file, duration: duration)
     }
@@ -335,10 +390,23 @@ final class UserSoundLibrary {
         return digest.map { String(format: "%02x", $0) }.joined()
     }
 
+    /// Best-effort save that logs instead of silently discarding the error.
+    /// Import/relink surface save failures to the user; these mutations have
+    /// no error channel, so the log is the only witness.
+    private func saveContext(_ operation: String) {
+        do {
+            try modelContext.save()
+        } catch {
+            Self.logger.error("\(operation) save failed: \(error.localizedDescription)")
+        }
+    }
+
     private func refresh() {
         let descriptor = FetchDescriptor<UserSoundAsset>()
         let records = (try? modelContext.fetch(descriptor)) ?? []
-        assetsByID = Dictionary(uniqueKeysWithValues: records.map { ($0.id, $0) })
+        // uniquing (not uniqueKeysWithValues): a corrupted store yielding two
+        // records with the same id must not crash the app at launch.
+        assetsByID = Dictionary(records.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
     }
 
     private func makeSoundAsset(from record: UserSoundAsset) -> SoundAsset {

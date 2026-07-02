@@ -1,3 +1,4 @@
+import Accessibility
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -5,7 +6,7 @@ extension SoundSource {
     var subtitle: String {
         switch type {
         case .binauralBeats, .isochronicTones, .monauralBeats:
-            return binauralRange?.description ?? "Realtime generator"
+            return binauralRange?.description ?? "Generated live"
         case .speechMasking:
             let pct = Int((maskingStrength ?? 0.5) * 100)
             return "Strength: \(pct)%"
@@ -16,9 +17,9 @@ extension SoundSource {
             if let asset = resolvedAsset {
                 return asset.category.rawValue
             }
-            return "Looped ambience"
+            return "Recorded loop"
         default:
-            return type.isGenerated ? "Realtime generator" : "Looped ambience"
+            return type.isGenerated ? "Generated live" : "Recorded loop"
         }
     }
 }
@@ -74,6 +75,19 @@ struct MixerView: View {
                     )
                 }
                 .buttonStyle(HushPressButtonStyle())
+            } else {
+                // At the cap: say so instead of silently hiding the add
+                // button — users never learned the limit existed.
+                HStack(spacing: 10) {
+                    Image(systemName: "checkmark.circle")
+                        .font(.subheadline.weight(.bold))
+                    Text("Mix is full — \(AudioConstants.maxSimultaneousSources) of \(AudioConstants.maxSimultaneousSources) sounds")
+                        .font(.subheadline.weight(.semibold))
+                }
+                .foregroundStyle(HushPalette.textSecondary)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 16)
+                .accessibilityElement(children: .combine)
             }
         }
         .sheet(isPresented: $showAddSound) {
@@ -94,8 +108,8 @@ private struct SourceRow: View {
     @Environment(UserSoundLibrary.self) private var library
     @State private var volume: Float
     @State private var maskingStrength: Float
-    @State private var pendingRelinkURL: URL?
     @State private var showRelinkPicker = false
+    @State private var relinkError: String?
 
     init(source: SoundSource, viewModel: PlayerViewModel) {
         self.source = source
@@ -116,40 +130,57 @@ private struct SourceRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 12) {
-                ZStack {
-                    Circle()
-                        .fill(HushPalette.raisedFill)
-                        .frame(width: 42, height: 42)
+                // Identity block combined into ONE VoiceOver stop announcing
+                // name + subtitle + current level. Scoped to exclude the
+                // Remove button (a combine over the whole header would
+                // swallow it) and skipped entirely for missing assets so the
+                // relink button stays individually actionable.
+                HStack(spacing: 12) {
+                    ZStack {
+                        Circle()
+                            .fill(HushPalette.raisedFill)
+                            .frame(width: 42, height: 42)
 
-                    Image(systemName: source.displayIcon)
-                        .font(.headline)
-                        .foregroundStyle(missingUserAsset != nil ? HushPalette.danger : HushPalette.textPrimary)
-                }
+                        Image(systemName: source.displayIcon)
+                            .font(.headline)
+                            .foregroundStyle(missingUserAsset != nil ? HushPalette.danger : HushPalette.textPrimary)
+                    }
 
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(source.displayName)
-                        .font(.headline)
-                        .foregroundStyle(HushPalette.textPrimary)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(source.displayName)
+                            .font(.headline)
+                            .foregroundStyle(HushPalette.textPrimary)
 
-                    if let missing = missingUserAsset {
-                        Button {
-                            showRelinkPicker = true
-                        } label: {
-                            HStack(spacing: 4) {
-                                Image(systemName: "exclamationmark.triangle.fill")
-                                Text("Missing — tap to relink")
+                        if let missing = missingUserAsset {
+                            Button {
+                                showRelinkPicker = true
+                            } label: {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "exclamationmark.triangle.fill")
+                                    Text("Missing — tap to relink")
+                                }
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(HushPalette.danger)
+                                .frame(minHeight: 44)
+                                .contentShape(Rectangle())
                             }
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(HushPalette.danger)
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("Relink \(missing.displayName)")
+
+                            if let relinkError {
+                                Text(relinkError)
+                                    .font(.caption2)
+                                    .foregroundStyle(HushPalette.danger)
+                            }
+                        } else {
+                            Text(source.subtitle)
+                                .font(.caption)
+                                .foregroundStyle(HushPalette.textSecondary)
                         }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("Relink \(missing.displayName)")
-                    } else {
-                        Text(source.subtitle)
-                            .font(.caption)
-                            .foregroundStyle(HushPalette.textSecondary)
                     }
                 }
+                .accessibilityElement(children: missingUserAsset == nil ? .combine : .contain)
+                .accessibilityValue(missingUserAsset == nil ? "\(Int(volume * 100)) percent" : "")
 
                 Spacer()
 
@@ -168,11 +199,6 @@ private struct SourceRow: View {
                 .buttonStyle(HushCircleButtonStyle())
                 .accessibilityLabel("Remove \(source.displayName)")
             }
-            // Combine the header row so VoiceOver announces one stop for the
-            // sound identity + its current level, then reaches Remove and the
-            // Slider as discrete actions below. Without this, VO pauses on
-            // the name, subtitle, and percentage as three separate elements.
-            .accessibilityElement(children: .contain)
 
             Slider(value: $volume, in: 0...1)
             .tint(HushPalette.accentSoft)
@@ -212,10 +238,20 @@ private struct SourceRow: View {
                   let asset = missingUserAsset else { return }
             let scoped = url.startAccessingSecurityScopedResource()
             defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-            try? library.relink(asset, to: url)
-            // Re-attach the existing source so the engine picks up the new
-            // file without changing the row's UUID, volume, or position.
-            viewModel.relinkSource(source)
+            do {
+                try library.relink(asset, to: url)
+                relinkError = nil
+                // Re-attach the existing source so the engine picks up the new
+                // file without changing the row's UUID, volume, or position.
+                viewModel.relinkSource(source)
+            } catch {
+                // Validation failures (too large, wrong format…) used to be
+                // swallowed by try? — the tap just did nothing.
+                let message = (error as? UserSoundImportError)?.errorDescription
+                    ?? "Couldn't relink this file."
+                relinkError = message
+                AccessibilityNotification.Announcement(message).post()
+            }
         }
     }
 
@@ -235,6 +271,7 @@ struct SoundPickerGrid: View {
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.horizontalSizeClass) private var sizeClass
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(UserSoundLibrary.self) private var library
     @State private var expandedCategories: Set<SoundCategory> = []
     @State private var showFileImporter = false
@@ -282,7 +319,7 @@ struct SoundPickerGrid: View {
                         // Generated section
                         soundSection(
                             title: "Generated",
-                            subtitle: "Realtime DSP layers",
+                            subtitle: "Noise and tones created live on this device",
                             sounds: availableGenerated
                         )
 
@@ -326,7 +363,6 @@ struct SoundPickerGrid: View {
                         .padding(.bottom, 24)
                     }
                     .transition(.opacity)
-                    .accessibilityAddTraits(.isStaticText)
                 }
             }
             .navigationTitle("Add Sound")
@@ -410,6 +446,9 @@ struct SoundPickerGrid: View {
         withAnimation(HushMotion.quick) {
             importerError = message
         }
+        // The banner is visual-only; without this a VoiceOver user picking
+        // an unreadable file hears nothing at all.
+        AccessibilityNotification.Announcement(message).post()
         // No auto-dismiss — users may need time to read, and screen-reader
         // users were cut off by the old 3-second timer. The inline dismiss
         // button in the banner is the clear path out.
@@ -426,7 +465,7 @@ struct SoundPickerGrid: View {
 
         VStack(alignment: .leading, spacing: 14) {
             Button {
-                withAnimation(HushMotion.standard) {
+                withAnimation(reduceMotion ? nil : HushMotion.standard) {
                     if isExpanded {
                         expandedCategories.remove(category)
                     } else {
@@ -459,6 +498,9 @@ struct SoundPickerGrid: View {
                 }
             }
             .buttonStyle(HushPressButtonStyle())
+            // The chevron rotation is the only expanded/collapsed signal —
+            // invisible to VoiceOver without an explicit value.
+            .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
 
             if isExpanded {
                 LazyVGrid(columns: columns, spacing: 14) {
@@ -502,7 +544,7 @@ struct SoundPickerGrid: View {
                         SoundCardLabel(
                             icon: type.icon,
                             title: type.rawValue,
-                            tag: "Synthetic"
+                            tag: "Generated"
                         )
                     }
                     .buttonStyle(HushPressButtonStyle())
@@ -560,9 +602,9 @@ private struct SoundCardLabel: View {
 // One set of controls used by both MixerView (live engine updates) and
 // EditPresetSheet (local state). Callers own the state and the write path.
 
-/// Shared chip style for picker rows. Kept local so picker sites stay
-/// declarative. Target height is 44pt to satisfy WCAG 2.5.8.
-private struct HushChipLabel: View {
+/// Shared chip style for picker rows (also reused by ImportSoundSheet).
+/// Target height is 44pt to satisfy WCAG 2.5.8.
+struct HushChipLabel: View {
     let text: String
     let isSelected: Bool
 

@@ -20,6 +20,7 @@ struct PresetSelector: View {
 
     @State private var renameTarget: RenameTarget?
     @State private var presetToEdit: Preset?
+    @State private var deleteTarget: DeleteTarget?
     @Namespace private var presetSelection
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -43,6 +44,10 @@ struct PresetSelector: View {
     /// followed by user-created presets that don't replace a built-in.
     private var orderedPresets: [(preset: Preset, saved: SavedPreset?)] {
         let builtInIDs = Set(Preset.builtIn.map(\.id))
+        // Hoist the @AppStorage JSON decodes out of the loop — the computed
+        // properties decode their Data blob on every access.
+        let hidden = hiddenBuiltInIDs
+        let renamed = renamedBuiltIns
         var result: [(Preset, SavedPreset?)] = []
 
         // Built-in slots in original order
@@ -50,10 +55,10 @@ struct PresetSelector: View {
             if let saved = savedByID[builtIn.id] {
                 // Edited built-in — show saved version in the built-in's slot
                 result.append((saved.toPreset(), saved))
-            } else if !hiddenBuiltInIDs.contains(builtIn.id) {
+            } else if !hidden.contains(builtIn.id) {
                 // Unedited, not hidden
                 var p = builtIn
-                if let newName = renamedBuiltIns[builtIn.id] { p.name = newName }
+                if let newName = renamed[builtIn.id] { p.name = newName }
                 result.append((p, nil))
             }
         }
@@ -77,17 +82,18 @@ struct PresetSelector: View {
                 presetRow(
                     icon: "dice.fill",
                     name: "Random Mix",
-                    detail: "Shuffle 2–3 sounds",
+                    detail: "Shuffle a few sounds",
                     isSelected: false
                 )
             }
             .buttonStyle(HushRowButtonStyle())
-            .accessibilityLabel("Random Mix — shuffle two to three sounds")
+            .accessibilityLabel("Random Mix — shuffles a few sounds")
 
             ForEach(orderedPresets, id: \.preset.id) { entry in
                 let preset = entry.preset
                 let saved = entry.saved
                 let selected = selectedPreset?.id == preset.id
+                let target = DeleteTarget(preset: preset, saved: saved)
 
                 Button { onSelect(preset) } label: {
                     presetRow(
@@ -98,8 +104,9 @@ struct PresetSelector: View {
                     )
                 }
                 .buttonStyle(HushRowButtonStyle())
-                .accessibilityLabel(preset.name)
-                .accessibilityHint("Double tap to play")
+                .accessibilityLabel("\(preset.name). \(presetSummary(preset))")
+                .accessibilityHint(selected ? "Currently playing" : "Plays this scene")
+                .accessibilityAddTraits(selected ? .isSelected : [])
                 .contextMenu {
                     Button {
                         presetToEdit = preset
@@ -115,25 +122,58 @@ struct PresetSelector: View {
                     } label: {
                         Label("Rename", systemImage: "pencil")
                     }
-                    Button(role: .destructive) {
-                        if let saved {
-                            deleteSaved(saved)
-                        } else {
+                    switch target.kind {
+                    case .hideBuiltIn:
+                        // Non-destructive (Settings can restore it) — no
+                        // confirmation, but the label must say what it does.
+                        Button {
                             hideBuiltIn(preset)
+                            onDelete(preset)
+                        } label: {
+                            Label("Hide", systemImage: "eye.slash")
                         }
-                        onDelete(preset)
-                    } label: {
-                        Label("Delete", systemImage: "trash")
+                    case .revertEditedBuiltIn:
+                        Button(role: .destructive) {
+                            deleteTarget = target
+                        } label: {
+                            Label("Revert to Original", systemImage: "arrow.uturn.backward")
+                        }
+                    case .deleteSaved:
+                        Button(role: .destructive) {
+                            deleteTarget = target
+                        } label: {
+                            Label("Delete", systemImage: "trash")
+                        }
                     }
                 }
             }
+        }
+        .confirmationDialog(
+            deleteTarget.map(deleteDialogTitle) ?? "",
+            isPresented: Binding(
+                get: { deleteTarget != nil },
+                set: { if !$0 { deleteTarget = nil } }
+            ),
+            titleVisibility: .visible,
+            presenting: deleteTarget
+        ) { target in
+            Button(target.kind == .revertEditedBuiltIn ? "Revert" : "Delete", role: .destructive) {
+                performDelete(target)
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { target in
+            Text(target.kind == .revertEditedBuiltIn
+                 ? "Your edits will be removed and the original scene will return."
+                 : "This can't be undone.")
         }
         .sheet(item: $renameTarget) { target in
             RenamePresetSheet(initialName: target.currentName) { newName in
                 applyRename(target: target, name: newName)
                 renameTarget = nil
             }
-            .presentationDetents([.height(220)])
+            // .medium instead of a fixed height: a 220pt detent clips the
+            // title + field at accessibility Dynamic Type sizes.
+            .presentationDetents([.medium])
             .presentationDragIndicator(.hidden)
         }
         .sheet(item: $presetToEdit) { preset in
@@ -200,6 +240,24 @@ struct PresetSelector: View {
         }
     }
 
+    // MARK: - Delete Confirmation
+
+    private func deleteDialogTitle(_ target: DeleteTarget) -> String {
+        switch target.kind {
+        case .revertEditedBuiltIn: return "Revert \u{201C}\(target.preset.name)\u{201D}?"
+        default: return "Delete \u{201C}\(target.preset.name)\u{201D}?"
+        }
+    }
+
+    private func performDelete(_ target: DeleteTarget) {
+        if let saved = target.saved {
+            deleteSaved(saved)
+        } else {
+            hideBuiltIn(target.preset)
+        }
+        onDelete(target.preset)
+    }
+
     // MARK: - Row
 
     private func presetRow(icon: String, name: String, detail: String, isSelected: Bool) -> some View {
@@ -227,8 +285,8 @@ struct PresetSelector: View {
 
             Image(systemName: isSelected ? "checkmark.circle.fill" : "play.circle")
                 .font(.body)
-                .foregroundStyle(isSelected ? HushPalette.accent : HushPalette.textMuted)
-                .contentTransition(.symbolEffect(.replace))
+                .foregroundStyle(isSelected ? HushPalette.accent : HushPalette.textSecondary)
+                .contentTransition(reduceMotion ? .identity : .symbolEffect(.replace))
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 13)
@@ -271,6 +329,29 @@ struct PresetSelector: View {
         } else {
             shape.transition(.opacity)
         }
+    }
+}
+
+private struct DeleteTarget: Identifiable {
+    enum Kind {
+        /// Unedited built-in: "deleting" just hides it (restorable in Settings).
+        case hideBuiltIn
+        /// A SavedPreset shadowing a built-in slot: deleting reverts to stock.
+        case revertEditedBuiltIn
+        /// A user-created preset: permanently destroyed.
+        case deleteSaved
+    }
+
+    let preset: Preset
+    let saved: SavedPreset?
+    var id: UUID { preset.id }
+
+    var kind: Kind {
+        guard let saved else { return .hideBuiltIn }
+        if Preset.builtIn.contains(where: { $0.id == saved.stableID }) {
+            return .revertEditedBuiltIn
+        }
+        return .deleteSaved
     }
 }
 

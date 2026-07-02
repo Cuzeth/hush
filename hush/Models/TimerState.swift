@@ -44,7 +44,9 @@ final class TimerState {
 
     var progress: Double {
         guard selectedDuration > 0 else { return 0 }
-        return 1.0 - (remainingSeconds / selectedDuration)
+        // Clamp: a restored timer can carry remaining > selectedDuration
+        // when the persisted duration was lost; the ring can't draw < 0.
+        return min(1, max(0, 1.0 - (remainingSeconds / selectedDuration)))
     }
 
     var displayTime: String {

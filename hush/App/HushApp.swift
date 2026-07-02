@@ -24,8 +24,16 @@ struct HushApp: App {
             // Fall back to in-memory store so the app remains usable after a
             // schema migration failure instead of entering a permanent crash loop.
             appLogger.error("ModelContainer failed, using in-memory fallback: \(error.localizedDescription)")
-            let fallback = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
-            container = try! ModelContainer(for: schema, configurations: [fallback])
+            do {
+                let fallback = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
+                container = try ModelContainer(for: schema, configurations: [fallback])
+            } catch {
+                // In-memory container creation failing means SwiftData itself
+                // is broken — there's no degraded mode left to offer. Crash
+                // with a diagnosable message instead of a bare `try!`.
+                appLogger.critical("In-memory ModelContainer fallback failed: \(error.localizedDescription)")
+                fatalError("In-memory ModelContainer fallback failed: \(error)")
+            }
             failureMessage = "Hush couldn't open your saved data. Your presets and imports won't load this session, and changes won't persist. Please report this if it keeps happening."
         }
         self.sharedModelContainer = container

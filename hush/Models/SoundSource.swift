@@ -4,7 +4,6 @@ struct SoundSource: Identifiable, Codable, Hashable {
     var id = UUID()
     var type: SoundType
     var volume: Float
-    var isActive: Bool
 
     // Binaural/isochronic/monaural parameters
     var binauralRange: BinauralRange?
@@ -19,13 +18,12 @@ struct SoundSource: Identifiable, Codable, Hashable {
     // Asset-based sample: references a SoundAsset by its ID
     var assetID: String?
 
-    init(type: SoundType, volume: Float = 0.7, isActive: Bool = true,
+    init(type: SoundType, volume: Float = 0.7,
          binauralRange: BinauralRange? = nil, binauralFrequency: Float? = nil,
          toneFrequency: Float? = nil, assetID: String? = nil,
          maskingStrength: Float? = nil) {
         self.type = type
         self.volume = volume
-        self.isActive = isActive
         self.binauralRange = binauralRange
         self.binauralFrequency = binauralFrequency
         self.toneFrequency = toneFrequency
@@ -37,7 +35,6 @@ struct SoundSource: Identifiable, Codable, Hashable {
     init(asset: SoundAsset, volume: Float = 1.0) {
         self.type = .sampleAsset
         self.volume = volume
-        self.isActive = true
         self.assetID = asset.id
     }
 
@@ -58,7 +55,10 @@ struct SoundSource: Identifiable, Codable, Hashable {
         resolvedAsset?.icon ?? type.icon
     }
 
+    // `isActive` existed here once but nothing ever set it false — old
+    // payloads that still carry the key decode fine (unknown keys are
+    // ignored).
     enum CodingKeys: String, CodingKey {
-        case id, type, volume, isActive, binauralRange, binauralFrequency, toneFrequency, assetID, maskingStrength
+        case id, type, volume, binauralRange, binauralFrequency, toneFrequency, assetID, maskingStrength
     }
 }

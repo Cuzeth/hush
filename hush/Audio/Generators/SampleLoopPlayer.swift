@@ -83,9 +83,31 @@ final class SampleLoopPlayer: @unchecked Sendable {
                 interleaved: false
             ) else { return }
 
-            // Read the source file into its native processing format
+            // File metadata is untrusted (user imports arrive via the Files
+            // picker, and files are re-read from disk on every playback):
+            // validate before any trapping conversion or large allocation.
             let sourceFormat = file.processingFormat
-            let sourceFrameCount = AVAudioFrameCount(file.length)
+            guard file.length > 0,
+                  sourceFormat.sampleRate > 0,
+                  sourceFormat.channelCount > 0,
+                  let sourceFrameCount = AVAudioFrameCount(exactly: file.length) else {
+                Self.logger.error("Rejected sample with invalid metadata: \(fileURL.lastPathComponent)")
+                isLoaded = false
+                return
+            }
+
+            // Bound decode memory: the import-time duration cap doesn't limit
+            // bytes when the header declares an extreme sample rate.
+            let ratio = targetSampleRate / sourceFormat.sampleRate
+            let estimatedBytes = Double(sourceFrameCount) * Double(sourceFormat.channelCount) * 4
+                + Double(sourceFrameCount) * ratio * 2 * 4
+            guard estimatedBytes.isFinite, estimatedBytes <= AudioConstants.maxDecodedSampleBytes else {
+                Self.logger.error("Rejected sample exceeding decode budget: \(fileURL.lastPathComponent)")
+                isLoaded = false
+                return
+            }
+
+            // Read the source file into its native processing format
             guard let sourceBuffer = AVAudioPCMBuffer(
                 pcmFormat: sourceFormat,
                 frameCapacity: sourceFrameCount
@@ -102,26 +124,34 @@ final class SampleLoopPlayer: @unchecked Sendable {
                 // Enable high-quality sample rate conversion
                 converter.sampleRateConverterQuality = .max
 
-                let ratio = targetSampleRate / sourceFormat.sampleRate
-                let outputFrameCount = AVAudioFrameCount(Double(sourceFrameCount) * ratio) + 1
-                guard let outputBuffer = AVAudioPCMBuffer(
-                    pcmFormat: targetFormat,
-                    frameCapacity: outputFrameCount
-                ) else { return }
+                // Headroom past the exact ratio so the resampler's flushed
+                // tail (filter delay) fits in one conversion pass.
+                let outputFrames = (Double(sourceFrameCount) * ratio).rounded(.up) + 64
+                guard let outputFrameCount = AVAudioFrameCount(exactly: outputFrames),
+                      let outputBuffer = AVAudioPCMBuffer(
+                          pcmFormat: targetFormat,
+                          frameCapacity: outputFrameCount
+                      ) else { return }
 
                 var error: NSError?
                 let srcBuf = sourceBuffer
                 var isDone = false
-                converter.convert(to: outputBuffer, error: &error) { _, outStatus in
+                // .endOfStream (not .noDataNow) after the single input buffer:
+                // it tells the converter to flush its internal filter delay.
+                // .noDataNow ("more later") dropped the last few milliseconds,
+                // so the pre-baked crossfade blended the head against the
+                // wrong tail — an audible thump at every loop seam for any
+                // asset whose native rate differs from the hardware's.
+                let status = converter.convert(to: outputBuffer, error: &error) { _, outStatus in
                     if isDone {
-                        outStatus.pointee = .noDataNow
+                        outStatus.pointee = .endOfStream
                         return nil
                     }
                     outStatus.pointee = .haveData
                     isDone = true
                     return srcBuf
                 }
-                if error != nil { return }
+                if error != nil || status == .error { return }
                 convertedBuffer = outputBuffer
             } else {
                 convertedBuffer = sourceBuffer

@@ -57,10 +57,16 @@ enum HushPalette {
         dark: Color(red: 0.690, green: 0.760, blue: 0.734),
         light: Color(red: 0.310, green: 0.442, blue: 0.378)
     )
+    // Light variant darkened past 4.5:1 on the warm near-white background —
+    // it carries caption-sized text ("Missing — tap to relink").
     static let danger = dynamic(
         dark: Color(red: 0.924, green: 0.446, blue: 0.415),
-        light: Color(red: 0.792, green: 0.288, blue: 0.248)
+        light: Color(red: 0.716, green: 0.242, blue: 0.204)
     )
+
+    /// Full-screen dimming layer behind blocking overlays (e.g. the reset
+    /// progress panel). Named so call sites stop writing raw Color.black.
+    static let scrim = Color.black.opacity(0.55)
 
     /// Subtle rim applied on top of an accent-filled surface (the highlighted
     /// HushInfoPill border). White-on-cream in dark, near-black-on-tan in
@@ -88,6 +94,28 @@ enum HushPalette {
             trait.userInterfaceStyle == .dark ? UIColor(dark) : UIColor(light)
         })
     }
+}
+
+/// Human-readable VoiceOver names for the SF Symbols offered in icon
+/// pickers. Without these, VO falls back to symbol identifiers like
+/// "speaker.wave.2.fill".
+enum HushSymbolName {
+    static func label(for symbol: String) -> String {
+        if let name = names[symbol] { return name }
+        return symbol
+            .replacingOccurrences(of: ".fill", with: "")
+            .replacingOccurrences(of: ".", with: " ")
+    }
+
+    private static let names: [String: String] = [
+        "star.fill": "Star", "heart.fill": "Heart", "bolt.fill": "Bolt",
+        "moon.fill": "Moon", "leaf.fill": "Leaf", "flame.fill": "Flame",
+        "drop.fill": "Water drop", "brain.head.profile": "Mind",
+        "sparkles": "Sparkles", "headphones": "Headphones",
+        "music.note": "Music note", "waveform.circle": "Waveform",
+        "waveform": "Waveform", "speaker.wave.2.fill": "Speaker",
+        "mic.fill": "Microphone", "sun.max.fill": "Sun", "cloud.fill": "Cloud",
+    ]
 }
 
 /// User-selectable appearance. Persisted via `@AppStorage("appearance")`.
@@ -179,7 +207,12 @@ struct HushBanner: View {
                 .foregroundStyle(accent)
                 .frame(width: 32, height: 32)
                 .background(Circle().fill(accent.opacity(0.18)))
+                .accessibilityHidden(true)
 
+            // Combine only the text stack — combining the whole banner
+            // merged the Dismiss button away, and this banner carries the
+            // safety warnings, so a VoiceOver user must be able to reach
+            // Dismiss as its own element.
             VStack(alignment: .leading, spacing: 3) {
                 Text(title)
                     .font(.subheadline.weight(.semibold))
@@ -190,6 +223,7 @@ struct HushBanner: View {
                     .lineSpacing(2)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            .accessibilityElement(children: .combine)
 
             Spacer(minLength: 8)
 
@@ -207,7 +241,6 @@ struct HushBanner: View {
         .padding(.vertical, 10)
         .padding(.trailing, 6)
         .hushPanel(radius: HushRadius.md)
-        .accessibilityElement(children: .combine)
     }
 }
 

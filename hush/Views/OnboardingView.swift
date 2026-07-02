@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct OnboardingView: View {
-    let onComplete: (Preset?) -> Void
+    let onComplete: () -> Void
     @Environment(\.horizontalSizeClass) private var sizeClass
     @ScaledMetric(relativeTo: .largeTitle) private var heroTitleSize: CGFloat = 40
 
@@ -32,14 +32,14 @@ struct OnboardingView: View {
 
                 Spacer().frame(height: 40)
 
-                Button {
-                    onComplete(nil)
-                } label: {
+                Button(action: onComplete) {
                     Text("Get Started")
                         .font(.headline)
                         .foregroundStyle(HushPalette.onAccent)
                         .frame(maxWidth: .infinity)
-                        .frame(height: 56)
+                        // minHeight, not height: a fixed 56pt clips the label
+                        // at accessibility Dynamic Type sizes.
+                        .frame(minHeight: 56)
                         .background(Capsule().fill(HushPalette.accent))
                 }
                 .buttonStyle(HushPrimaryButtonStyle())

@@ -192,48 +192,53 @@ struct PlayerView: View {
 
     private var mixerSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("Customize")
-                    .font(.headline)
-                    .foregroundStyle(HushPalette.textPrimary)
-
-                Spacer()
-
-                HStack(spacing: 10) {
-                    if !viewModel.activeSources.isEmpty {
-                        Button {
-                            presetName = defaultPresetName
-                            showSavePreset = true
-                        } label: {
-                            Image(systemName: "square.and.arrow.down")
-                                .font(.subheadline.weight(.medium))
-                                .foregroundStyle(HushPalette.textSecondary)
-                                .frame(width: 44, height: 44)
-                                .contentShape(Rectangle())
+            // A real Button for the disclosure, with Save as a SIBLING.
+            // The old shape (onTapGesture + .isButton + label on a container
+            // that also held the save button) risked VoiceOver exposing one
+            // "Show mixer" element and hiding Save entirely.
+            HStack(spacing: 10) {
+                Button {
+                    if reduceMotion {
+                        viewModel.showMixer.toggle()
+                    } else {
+                        withAnimation(HushMotion.standard) {
+                            viewModel.showMixer.toggle()
                         }
-                        .buttonStyle(HushPressButtonStyle())
-                        .accessibilityLabel("Save current mix as preset")
                     }
-
-                    Image(systemName: viewModel.showMixer ? "chevron.up" : "chevron.down")
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(HushPalette.textSecondary)
+                } label: {
+                    HStack {
+                        Text("Customize")
+                            .font(.headline)
+                            .foregroundStyle(HushPalette.textPrimary)
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.vertical, 14)
+                    .contentShape(Rectangle())
                 }
+                .buttonStyle(HushRowButtonStyle())
+                .accessibilityLabel(viewModel.showMixer ? "Hide mixer" : "Show mixer")
+
+                if !viewModel.activeSources.isEmpty {
+                    Button {
+                        presetName = defaultPresetName
+                        showSavePreset = true
+                    } label: {
+                        Image(systemName: "square.and.arrow.down")
+                            .font(.subheadline.weight(.medium))
+                            .foregroundStyle(HushPalette.textSecondary)
+                            .frame(width: 44, height: 44)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(HushPressButtonStyle())
+                    .accessibilityLabel("Save current mix as preset")
+                }
+
+                Image(systemName: viewModel.showMixer ? "chevron.up" : "chevron.down")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(HushPalette.textSecondary)
+                    .accessibilityHidden(true)
             }
             .padding(.horizontal, 20)
-            .padding(.vertical, 14)
-            .contentShape(Rectangle())
-            .onTapGesture {
-                if reduceMotion {
-                    viewModel.showMixer.toggle()
-                } else {
-                    withAnimation(HushMotion.standard) {
-                        viewModel.showMixer.toggle()
-                    }
-                }
-            }
-            .accessibilityAddTraits(.isButton)
-            .accessibilityLabel(viewModel.showMixer ? "Hide mixer" : "Show mixer")
 
             if viewModel.showMixer {
                 MixerView(viewModel: viewModel)
@@ -300,6 +305,9 @@ struct PlayerView: View {
                 .buttonStyle(HushPrimaryButtonStyle())
                 .disabled(viewModel.activeSources.isEmpty)
                 .accessibilityLabel(viewModel.isPlaying ? "Pause" : "Play")
+                .accessibilityHint(viewModel.activeSources.isEmpty
+                                   ? "Add a sound or choose a scene first"
+                                   : "")
             }
             .padding(.horizontal, 20)
             .padding(.bottom, 12)
@@ -389,6 +397,8 @@ private struct SavePresetSheet: View {
                                             )
                                     }
                                     .buttonStyle(HushPressButtonStyle())
+                                    .accessibilityLabel(HushSymbolName.label(for: choice))
+                                    .accessibilityAddTraits(selected ? .isSelected : [])
                                 }
                             }
                             .sensoryFeedback(.selection, trigger: icon)

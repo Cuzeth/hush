@@ -122,23 +122,30 @@ private struct EditSourceRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 12) {
-                ZStack {
-                    Circle()
-                        .fill(HushPalette.raisedFill)
-                        .frame(width: 42, height: 42)
-                    Image(systemName: source.displayIcon)
-                        .font(.headline)
-                        .foregroundStyle(HushPalette.textPrimary)
-                }
+                // Identity block: one VoiceOver stop for name + subtitle +
+                // level, matching SourceRow in MixerView. Scoped so the
+                // Remove button stays its own element.
+                HStack(spacing: 12) {
+                    ZStack {
+                        Circle()
+                            .fill(HushPalette.raisedFill)
+                            .frame(width: 42, height: 42)
+                        Image(systemName: source.displayIcon)
+                            .font(.headline)
+                            .foregroundStyle(HushPalette.textPrimary)
+                    }
 
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(source.displayName)
-                        .font(.headline)
-                        .foregroundStyle(HushPalette.textPrimary)
-                    Text(source.subtitle)
-                        .font(.caption)
-                        .foregroundStyle(HushPalette.textSecondary)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(source.displayName)
+                            .font(.headline)
+                            .foregroundStyle(HushPalette.textPrimary)
+                        Text(source.subtitle)
+                            .font(.caption)
+                            .foregroundStyle(HushPalette.textSecondary)
+                    }
                 }
+                .accessibilityElement(children: .combine)
+                .accessibilityValue("\(Int(volume * 100)) percent")
 
                 Spacer()
 
@@ -146,6 +153,7 @@ private struct EditSourceRow: View {
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(HushPalette.textSecondary)
                     .monospacedDigit()
+                    .accessibilityHidden(true)
 
                 Button {
                     if reduceMotion {
@@ -165,6 +173,8 @@ private struct EditSourceRow: View {
 
             Slider(value: $volume, in: 0...1)
                 .tint(HushPalette.accentSoft)
+                .accessibilityLabel("\(source.displayName) volume")
+                .accessibilityValue("\(Int(volume * 100)) percent")
                 .onChange(of: volume) {
                     if let idx = sources.firstIndex(where: { $0.id == source.id }) {
                         sources[idx].volume = volume

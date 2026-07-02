@@ -1,3 +1,4 @@
+import Accessibility
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -11,6 +12,7 @@ struct UserSoundManagementView: View {
     @State private var showImporter = false
     @State private var editingAsset: UserSoundAsset?
     @State private var relinkAsset: UserSoundAsset?
+    @State private var showRelinkImporter = false
     @State private var pendingNewImportURL: ImportURL?
     @State private var importerError: String?
 
@@ -93,16 +95,17 @@ struct UserSoundManagementView: View {
         .sheet(item: $pendingNewImportURL) { wrap in
             ImportSoundSheet(mode: .newImport(sourceURL: wrap.url), library: library)
         }
+        // Explicit Bool + separate asset state: the old derived binding
+        // (`isPresented: relinkAsset != nil`) nilled the asset on dismissal
+        // and the completion re-read it — worked only because completion
+        // happens to fire before dismissal.
         .fileImporter(
-            isPresented: Binding(
-                get: { relinkAsset != nil },
-                set: { if !$0 { relinkAsset = nil } }
-            ),
+            isPresented: $showRelinkImporter,
             allowedContentTypes: [.audio],
             allowsMultipleSelection: false
         ) { result in
+            defer { relinkAsset = nil }
             guard let asset = relinkAsset else { return }
-            relinkAsset = nil
             if case .success(let urls) = result, let url = urls.first {
                 let scoped = url.startAccessingSecurityScopedResource()
                 defer { if scoped { url.stopAccessingSecurityScopedResource() } }
@@ -142,7 +145,10 @@ struct UserSoundManagementView: View {
                     AssetRow(
                         asset: asset,
                         onEdit: { editingAsset = asset },
-                        onRelink: { relinkAsset = asset },
+                        onRelink: {
+                            relinkAsset = asset
+                            showRelinkImporter = true
+                        },
                         onDelete: { library.delete(asset) }
                     )
                 }
@@ -183,6 +189,8 @@ struct UserSoundManagementView: View {
         withAnimation(HushMotion.quick) {
             importerError = message
         }
+        // The banner is visual-only — announce for VoiceOver users.
+        AccessibilityNotification.Announcement(message).post()
         // No auto-dismiss — user taps the inline close button. WCAG 2.2.1.
     }
 }
@@ -236,8 +244,13 @@ private struct AssetRow: View {
                         .background(
                             Capsule().fill(HushPalette.danger.opacity(0.15))
                         )
+                        // Recovery action for an error state: the pill stays
+                        // visually small but the hit target must be ≥44pt.
+                        .frame(minHeight: 44)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(HushPressButtonStyle())
+                .accessibilityLabel("Relink \(asset.displayName)")
             }
 
             Menu {
