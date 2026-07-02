@@ -16,6 +16,7 @@ final class GrayNoiseGenerator: SoundGenerator, @unchecked Sendable {
 
     nonisolated(unsafe) private var filters: (BiquadState, BiquadState, BiquadState, BiquadState)
     nonisolated(unsafe) private var rng: AudioRNG
+    nonisolated(unsafe) private var ramp = VolumeRamp()
 
     // NOTE: Biquad coefficients are sample-rate-dependent. A new instance must
     // be created whenever the hardware sample rate changes. This is guaranteed
@@ -32,7 +33,8 @@ final class GrayNoiseGenerator: SoundGenerator, @unchecked Sendable {
     }
 
     nonisolated func generateMono(into buffer: UnsafeMutablePointer<Float>, frameCount: Int) {
-        let vol = Float(bitPattern: _volume.load(ordering: .relaxed))
+        let target = Float(bitPattern: _volume.load(ordering: .relaxed))
+        var (vol, volStep) = ramp.step(toward: target, frameCount: frameCount)
         for i in 0..<frameCount {
             var sample = rng.nextFloat()
             sample = filters.0.process(sample)
@@ -40,6 +42,7 @@ final class GrayNoiseGenerator: SoundGenerator, @unchecked Sendable {
             sample = filters.2.process(sample)
             sample = filters.3.process(sample)
             buffer[i] = sample * 0.15 * vol
+            vol += volStep
         }
     }
 

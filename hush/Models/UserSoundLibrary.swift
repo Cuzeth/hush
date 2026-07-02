@@ -76,6 +76,11 @@ final class UserSoundLibrary {
     /// Subdirectory under `Documents/` that holds all imported audio files.
     static let storageDirectoryName = "UserSounds"
 
+    /// Called after an asset's content may have changed (edit, relink,
+    /// delete, reset) so playback caches can drop stale pre-baked buffers.
+    /// Wired to AudioEngine.invalidateCachedBuffer by HushApp; nil in tests.
+    @ObservationIgnored var onAssetContentChanged: ((String) -> Void)?
+
     let maximumImportFileSizeBytes: Int64
     private let modelContext: ModelContext
     private let storageDirectory: URL
@@ -226,14 +231,19 @@ final class UserSoundLibrary {
         mutate(asset)
         saveContext("update")
         refresh()
+        // Crossfade settings bake into the cached loop buffer — invalidate
+        // even for cosmetic edits (cheap; the next play re-decodes).
+        onAssetContentChanged?(asset.assetID)
     }
 
     func delete(_ asset: UserSoundAsset) {
+        let assetID = asset.assetID
         let url = url(for: asset)
         try? FileManager.default.removeItem(at: url)
         modelContext.delete(asset)
         saveContext("delete")
         refresh()
+        onAssetContentChanged?(assetID)
     }
 
     /// Deletes every imported sound — files and records — and refreshes the
@@ -242,12 +252,16 @@ final class UserSoundLibrary {
     /// context, and its snapshot would otherwise keep resolving (and
     /// reporting missing) assets the user deliberately erased.
     func resetAll() {
+        let assetIDs = assetsByID.values.map(\.assetID)
         for asset in assetsByID.values {
             try? FileManager.default.removeItem(at: url(for: asset))
             modelContext.delete(asset)
         }
         saveContext("resetAll")
         refresh()
+        for assetID in assetIDs {
+            onAssetContentChanged?(assetID)
+        }
     }
 
     /// Re-binds an existing record to a new file (used when the original was
@@ -294,6 +308,7 @@ final class UserSoundLibrary {
             throw UserSoundImportError.copyFailed
         }
         refresh()
+        onAssetContentChanged?(asset.assetID)
     }
 
     // MARK: - Verification

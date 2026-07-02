@@ -324,7 +324,7 @@ final class PlayerViewModel {
     }
 
     private static var hiddenBuiltInIDs: Set<UUID> {
-        guard let data = UserDefaults.standard.data(forKey: "hiddenBuiltInPresets") else { return [] }
+        guard let data = UserDefaults.standard.data(forKey: PrefsKey.hiddenBuiltInPresets) else { return [] }
         return (try? JSONDecoder().decode(Set<UUID>.self, from: data)) ?? []
     }
 
@@ -474,7 +474,7 @@ final class PlayerViewModel {
         // Mark "seen" only after the user dismisses the banner — otherwise
         // a higher-priority warning replacing it before they can read it
         // would burn the single-shot.
-        guard !UserDefaults.standard.bool(forKey: "hasSeenBeatSafetyWarning") else { return }
+        guard !UserDefaults.standard.bool(forKey: PrefsKey.beatSafetySeen) else { return }
         showWarning(.beatSafety)
     }
 
@@ -503,7 +503,7 @@ final class PlayerViewModel {
         // when the user actually dismisses it, so a higher-priority warning
         // replacing it doesn't burn the single-shot.
         if case .beatSafety = dismissed {
-            UserDefaults.standard.set(true, forKey: "hasSeenBeatSafetyWarning")
+            UserDefaults.standard.set(true, forKey: PrefsKey.beatSafetySeen)
         }
         if case .missingUserSounds = dismissed {
             // User explicitly closed the missing banner — don't immediately
@@ -599,8 +599,12 @@ final class PlayerViewModel {
         }
     }
 
+    /// System sound played when the focus timer completes ("Fanfare" —
+    /// SMS-received tone 1007 from the iOS system sound catalog).
+    private static let timerChimeSoundID: SystemSoundID = 1007
+
     private func playChime() {
-        AudioServicesPlaySystemSound(1007)
+        AudioServicesPlaySystemSound(Self.timerChimeSoundID)
     }
 
     // MARK: - Timer Notification (fires when app is backgrounded)

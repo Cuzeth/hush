@@ -39,6 +39,7 @@ final class DroneGenerator: SoundGenerator, @unchecked Sendable {
     nonisolated(unsafe) private var lfoPhase1: Double = 0  // 3rd harmonic
     nonisolated(unsafe) private var lfoPhase2: Double = 0  // 5th harmonic
 
+    nonisolated(unsafe) private var ramp = VolumeRamp()
     private let sampleRate: Double
 
     nonisolated init(sampleRate: Double = 44100) {
@@ -46,7 +47,8 @@ final class DroneGenerator: SoundGenerator, @unchecked Sendable {
     }
 
     nonisolated func generateMono(into buffer: UnsafeMutablePointer<Float>, frameCount: Int) {
-        let vol = Float(bitPattern: _volume.load(ordering: .relaxed))
+        let targetVol = Float(bitPattern: _volume.load(ordering: .relaxed))
+        var (vol, volStep) = ramp.step(toward: targetVol, frameCount: frameCount)
         let freq = Double(Float(bitPattern: _frequency.load(ordering: .relaxed)))
         let twoPi = 2.0 * Double.pi
 
@@ -67,12 +69,15 @@ final class DroneGenerator: SoundGenerator, @unchecked Sendable {
         let lfoInc1 = twoPi * 0.037 / sampleRate
         let lfoInc2 = twoPi * 0.051 / sampleRate
 
-        for i in 0..<frameCount {
-            // LFO envelopes: range 0.7–1.0 (gentle swell, never silent)
-            let lfo0 = Float(0.85 + 0.15 * cos(lfoPhase0))
-            let lfo1 = Float(0.85 + 0.15 * cos(lfoPhase1))
-            let lfo2 = Float(0.85 + 0.15 * cos(lfoPhase2))
+        // LFO envelopes: range 0.7–1.0 (gentle swell, never silent).
+        // At 0.02–0.05 Hz an LFO moves imperceptibly within one ~10 ms render
+        // buffer, so evaluate once per buffer instead of 3 cos() per sample —
+        // that's a third of this generator's per-sample transcendentals.
+        let lfo0 = Float(0.85 + 0.15 * cos(lfoPhase0))
+        let lfo1 = Float(0.85 + 0.15 * cos(lfoPhase1))
+        let lfo2 = Float(0.85 + 0.15 * cos(lfoPhase2))
 
+        for i in 0..<frameCount {
             // Fundamental layer (3 oscillators averaged)
             let fund = Float(sin(fundPhase0) + sin(fundPhase1) + sin(fundPhase2)) / 3.0 * lfo0
 
@@ -83,6 +88,7 @@ final class DroneGenerator: SoundGenerator, @unchecked Sendable {
             let h5 = Float(sin(harm5Phase)) * 0.125 * lfo2
 
             buffer[i] = (fund + h3 + h5) * vol * 0.75  // headroom normalization
+            vol += volStep
 
             // Advance phases
             fundPhase0 += fundInc0
@@ -91,9 +97,6 @@ final class DroneGenerator: SoundGenerator, @unchecked Sendable {
             harm3Phase0 += harm3Inc0
             harm3Phase1 += harm3Inc1
             harm5Phase += harm5Inc
-            lfoPhase0 += lfoInc0
-            lfoPhase1 += lfoInc1
-            lfoPhase2 += lfoInc2
 
             if fundPhase0 >= twoPi { fundPhase0 -= twoPi }
             if fundPhase1 >= twoPi { fundPhase1 -= twoPi }
@@ -101,9 +104,11 @@ final class DroneGenerator: SoundGenerator, @unchecked Sendable {
             if harm3Phase0 >= twoPi { harm3Phase0 -= twoPi }
             if harm3Phase1 >= twoPi { harm3Phase1 -= twoPi }
             if harm5Phase >= twoPi { harm5Phase -= twoPi }
-            if lfoPhase0 >= twoPi { lfoPhase0 -= twoPi }
-            if lfoPhase1 >= twoPi { lfoPhase1 -= twoPi }
-            if lfoPhase2 >= twoPi { lfoPhase2 -= twoPi }
         }
+
+        // Advance LFO phases by the whole buffer.
+        lfoPhase0 = (lfoPhase0 + lfoInc0 * Double(frameCount)).truncatingRemainder(dividingBy: twoPi)
+        lfoPhase1 = (lfoPhase1 + lfoInc1 * Double(frameCount)).truncatingRemainder(dividingBy: twoPi)
+        lfoPhase2 = (lfoPhase2 + lfoInc2 * Double(frameCount)).truncatingRemainder(dividingBy: twoPi)
     }
 }

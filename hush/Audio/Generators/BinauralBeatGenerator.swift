@@ -29,6 +29,7 @@ final class BinauralBeatGenerator: SoundGenerator, @unchecked Sendable {
 
     nonisolated(unsafe) private var phaseLeft: Double = 0
     nonisolated(unsafe) private var phaseRight: Double = 0
+    nonisolated(unsafe) private var ramp = VolumeRamp()
     private let sampleRate: Double
 
     nonisolated init(sampleRate: Double = 44100) {
@@ -41,13 +42,15 @@ final class BinauralBeatGenerator: SoundGenerator, @unchecked Sendable {
 
     // Mono fallback: carrier tone only (no binaural effect)
     nonisolated func generateMono(into buffer: UnsafeMutablePointer<Float>, frameCount: Int) {
-        let vol = Float(bitPattern: _volume.load(ordering: .relaxed))
+        let target = Float(bitPattern: _volume.load(ordering: .relaxed))
+        var (vol, volStep) = ramp.step(toward: target, frameCount: frameCount)
         let carrier = Double(Float(bitPattern: _carrierFrequency.load(ordering: .relaxed)))
         let twoPi = 2.0 * Double.pi
         let inc = twoPi * carrier / sampleRate
 
         for i in 0..<frameCount {
             buffer[i] = Float(sin(phaseLeft)) * vol
+            vol += volStep
             phaseLeft += inc
             if phaseLeft >= twoPi { phaseLeft -= twoPi }
         }
@@ -57,7 +60,8 @@ final class BinauralBeatGenerator: SoundGenerator, @unchecked Sendable {
     nonisolated func generateStereo(left: UnsafeMutablePointer<Float>,
                                      right: UnsafeMutablePointer<Float>,
                                      frameCount: Int) {
-        let vol = Float(bitPattern: _volume.load(ordering: .relaxed))
+        let target = Float(bitPattern: _volume.load(ordering: .relaxed))
+        var (vol, volStep) = ramp.step(toward: target, frameCount: frameCount)
         let carrier = Double(Float(bitPattern: _carrierFrequency.load(ordering: .relaxed)))
         let beat = Double(Float(bitPattern: _beatFrequency.load(ordering: .relaxed)))
         let twoPi = 2.0 * Double.pi
@@ -68,6 +72,7 @@ final class BinauralBeatGenerator: SoundGenerator, @unchecked Sendable {
         for i in 0..<frameCount {
             left[i] = Float(sin(phaseLeft)) * vol
             right[i] = Float(sin(phaseRight)) * vol
+            vol += volStep
 
             phaseLeft += incL
             phaseRight += incR

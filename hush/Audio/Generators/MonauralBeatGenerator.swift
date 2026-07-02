@@ -31,6 +31,7 @@ final class MonauralBeatGenerator: SoundGenerator, @unchecked Sendable {
 
     nonisolated(unsafe) private var phase1: Double = 0
     nonisolated(unsafe) private var phase2: Double = 0
+    nonisolated(unsafe) private var ramp = VolumeRamp()
     private let sampleRate: Double
 
     nonisolated init(sampleRate: Double = 44100) {
@@ -42,7 +43,8 @@ final class MonauralBeatGenerator: SoundGenerator, @unchecked Sendable {
     }
 
     nonisolated func generateMono(into buffer: UnsafeMutablePointer<Float>, frameCount: Int) {
-        let vol = Float(bitPattern: _volume.load(ordering: .relaxed))
+        let target = Float(bitPattern: _volume.load(ordering: .relaxed))
+        var (vol, volStep) = ramp.step(toward: target, frameCount: frameCount)
         let carrier = Double(Float(bitPattern: _carrierFrequency.load(ordering: .relaxed)))
         let beat = Double(Float(bitPattern: _beatFrequency.load(ordering: .relaxed)))
         let twoPi = 2.0 * Double.pi
@@ -56,6 +58,7 @@ final class MonauralBeatGenerator: SoundGenerator, @unchecked Sendable {
         for i in 0..<frameCount {
             // Sum two sines, scale by 0.5 to keep peak amplitude at 1.0
             buffer[i] = Float(sin(phase1) + sin(phase2)) * 0.5 * vol
+            vol += volStep
 
             phase1 += inc1
             phase2 += inc2

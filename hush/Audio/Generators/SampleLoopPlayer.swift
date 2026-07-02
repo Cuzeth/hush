@@ -1,5 +1,4 @@
 @preconcurrency import AVFoundation
-import Synchronization
 import os.log
 
 // Loads bundled audio samples and pre-bakes a seamless crossfade loop buffer
@@ -7,17 +6,14 @@ import os.log
 // no sample-level work happens in any real-time render callback.
 final class SampleLoopPlayer: @unchecked Sendable {
     nonisolated private static let logger = Logger(subsystem: "dev.abdeen.hush", category: "SampleLoopPlayer")
-    private let _volume = Atomic<UInt32>(0x3F80_0000) // 1.0f
-    nonisolated(unsafe) private(set) var loopBuffer: AVAudioPCMBuffer?
+    /// Settable so the engine can attach a cached buffer on the cache-hit
+    /// path — the player is then the strong reference that survives NSCache
+    /// eviction. (Playback volume lives on the AVAudioPlayerNode, not here.)
+    nonisolated(unsafe) var loopBuffer: AVAudioPCMBuffer?
     nonisolated(unsafe) private(set) var isLoaded = false
 
     /// The asset this player was loaded from (nil for legacy loads)
     nonisolated(unsafe) private(set) var assetID: String?
-
-    nonisolated var volume: Float {
-        get { Float(bitPattern: _volume.load(ordering: .relaxed)) }
-        set { _volume.store(newValue.bitPattern, ordering: .relaxed) }
-    }
 
     nonisolated init() {}
 

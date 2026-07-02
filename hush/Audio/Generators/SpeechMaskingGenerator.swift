@@ -21,18 +21,14 @@ final class SpeechMaskingGenerator: SoundGenerator, @unchecked Sendable {
     /// 0.0 (flat pink) to 1.0 (full speech-band emphasis)
     nonisolated var strength: Float {
         get { Float(_strength.load(ordering: .relaxed)) / 100.0 }
-        set { _strength.store(UInt32(max(0, min(100, newValue * 100))), ordering: .relaxed) }
+        // .rounded() so e.g. 0.999 stores as 100, not truncated to 99.
+        set { _strength.store(UInt32(max(0, min(100, (newValue * 100).rounded()))), ordering: .relaxed) }
     }
 
-    // Pink noise IIR state (Paul Kellet, same as PinkNoiseGenerator)
-    nonisolated(unsafe) private var b0: Float = 0
-    nonisolated(unsafe) private var b1: Float = 0
-    nonisolated(unsafe) private var b2: Float = 0
-    nonisolated(unsafe) private var b3: Float = 0
-    nonisolated(unsafe) private var b4: Float = 0
-    nonisolated(unsafe) private var b5: Float = 0
-    nonisolated(unsafe) private var b6: Float = 0
+    // Pink noise base (shared Kellet core, same as PinkNoiseGenerator)
+    nonisolated(unsafe) private var pinkCore = PinkNoiseCore()
     nonisolated(unsafe) private var rng: AudioRNG
+    nonisolated(unsafe) private var ramp = VolumeRamp()
 
     // Bandpass biquad state (speech band ~500–4000 Hz)
     nonisolated(unsafe) private var bpX1: Float = 0
@@ -76,21 +72,12 @@ final class SpeechMaskingGenerator: SoundGenerator, @unchecked Sendable {
     }
 
     nonisolated func generateMono(into buffer: UnsafeMutablePointer<Float>, frameCount: Int) {
-        let vol = Float(bitPattern: _volume.load(ordering: .relaxed))
+        let target = Float(bitPattern: _volume.load(ordering: .relaxed))
+        var (vol, volStep) = ramp.step(toward: target, frameCount: frameCount)
         let s = Float(_strength.load(ordering: .relaxed)) / 100.0
 
         for i in 0..<frameCount {
-            let white = rng.nextFloat()
-
-            // Pink noise generation (Paul Kellet IIR)
-            b0 = 0.99886 * b0 + white * 0.0555179
-            b1 = 0.99332 * b1 + white * 0.0750759
-            b2 = 0.96900 * b2 + white * 0.1538520
-            b3 = 0.86650 * b3 + white * 0.3104856
-            b4 = 0.55000 * b4 + white * 0.5329522
-            b5 = -0.7616 * b5 - white * 0.0168980
-            let pink = (b0 + b1 + b2 + b3 + b4 + b5 + b6 + white * 0.5362) * 0.11
-            b6 = white * 0.115926
+            let pink = pinkCore.process(rng.nextFloat())
 
             // Bandpass filter for speech-band emphasis
             let filtered = bpB0 * pink + bpB1 * bpX1 + bpB2 * bpX2
@@ -103,6 +90,7 @@ final class SpeechMaskingGenerator: SoundGenerator, @unchecked Sendable {
             // Mix: flat pink + speech-band emphasis (boosted)
             let emphasized = pink * (1.0 - s * 0.4) + filtered * s * 2.5
             buffer[i] = emphasized * vol
+            vol += volStep
         }
     }
 }

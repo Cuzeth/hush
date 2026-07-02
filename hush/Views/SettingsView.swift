@@ -72,8 +72,8 @@ struct SettingsView: View {
 
                     Section {
                         Button {
-                            UserDefaults.standard.removeObject(forKey: "hiddenBuiltInPresets")
-                            UserDefaults.standard.removeObject(forKey: "renamedBuiltInPresets")
+                            UserDefaults.standard.removeObject(forKey: PrefsKey.hiddenBuiltInPresets)
+                            UserDefaults.standard.removeObject(forKey: PrefsKey.renamedBuiltInPresets)
                             withAnimation(HushMotion.quick) { builtInsRestored = true }
                             AccessibilityNotification.Announcement("Built-in scenes restored").post()
                         } label: {

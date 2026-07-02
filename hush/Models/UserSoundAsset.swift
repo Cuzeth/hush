@@ -39,8 +39,8 @@ final class UserSoundAsset {
     var dateImported: Date
 
     /// Set during `UserSoundLibrary.verify()` when the backing file is gone.
-    /// Transient (recomputed each launch); we still persist it so UI can
-    /// render the missing badge before the verify pass finishes.
+    /// Persisted (not transient) deliberately: the UI can render the missing
+    /// badge from the last known state before the next verify pass runs.
     var isMissing: Bool
 
     init(

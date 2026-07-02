@@ -19,6 +19,14 @@ enum AudioConstants {
     nonisolated static let maxDecodedSampleBytes: Double = 500_000_000
 }
 
+/// UserDefaults keys shared across files. Inline string literals drifted —
+/// the same key was retyped in three places for the hidden-presets map alone.
+enum PrefsKey {
+    nonisolated static let hiddenBuiltInPresets = "hiddenBuiltInPresets"
+    nonisolated static let renamedBuiltInPresets = "renamedBuiltInPresets"
+    nonisolated static let beatSafetySeen = "hasSeenBeatSafetyWarning"
+}
+
 enum BinauralRange: String, CaseIterable, Identifiable, Codable {
     case alpha = "Alpha"
     case smr = "SMR"

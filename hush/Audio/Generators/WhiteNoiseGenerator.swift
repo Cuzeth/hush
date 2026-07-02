@@ -10,6 +10,7 @@ final class WhiteNoiseGenerator: SoundGenerator, @unchecked Sendable {
     }
 
     nonisolated(unsafe) private var rng: AudioRNG
+    nonisolated(unsafe) private var ramp = VolumeRamp()
 
     // sampleRate accepted for API consistency with other generators but unused —
     // white noise is sample-rate-independent.
@@ -18,9 +19,11 @@ final class WhiteNoiseGenerator: SoundGenerator, @unchecked Sendable {
     }
 
     nonisolated func generateMono(into buffer: UnsafeMutablePointer<Float>, frameCount: Int) {
-        let vol = Float(bitPattern: _volume.load(ordering: .relaxed))
+        let target = Float(bitPattern: _volume.load(ordering: .relaxed))
+        var (vol, volStep) = ramp.step(toward: target, frameCount: frameCount)
         for i in 0..<frameCount {
             buffer[i] = rng.nextFloat() * vol
+            vol += volStep
         }
     }
 }

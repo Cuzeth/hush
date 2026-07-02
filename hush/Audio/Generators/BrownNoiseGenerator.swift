@@ -15,6 +15,7 @@ final class BrownNoiseGenerator: SoundGenerator, @unchecked Sendable {
     nonisolated(unsafe) private var lastOutput: Float = 0
     nonisolated(unsafe) private var dcBlocker: DCBlockingFilter
     nonisolated(unsafe) private var rng: AudioRNG
+    nonisolated(unsafe) private var ramp = VolumeRamp()
 
     nonisolated init(sampleRate: Double = 44100) {
         self.dcBlocker = DCBlockingFilter(sampleRate: sampleRate)
@@ -22,12 +23,14 @@ final class BrownNoiseGenerator: SoundGenerator, @unchecked Sendable {
     }
 
     nonisolated func generateMono(into buffer: UnsafeMutablePointer<Float>, frameCount: Int) {
-        let vol = Float(bitPattern: _volume.load(ordering: .relaxed))
+        let target = Float(bitPattern: _volume.load(ordering: .relaxed))
+        var (vol, volStep) = ramp.step(toward: target, frameCount: frameCount)
         for i in 0..<frameCount {
             let white = rng.nextFloat()
             lastOutput = (lastOutput + 0.02 * white) / 1.02
             let filtered = dcBlocker.process(lastOutput)
             buffer[i] = min(1, max(-1, filtered * 3.5 * vol))
+            vol += volStep
         }
     }
 }

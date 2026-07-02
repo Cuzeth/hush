@@ -24,8 +24,8 @@ struct PresetSelector: View {
     @Namespace private var presetSelection
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    @AppStorage("hiddenBuiltInPresets") private var hiddenBuiltInData = Data()
-    @AppStorage("renamedBuiltInPresets") private var renamedBuiltInData = Data()
+    @AppStorage(PrefsKey.hiddenBuiltInPresets) private var hiddenBuiltInData = Data()
+    @AppStorage(PrefsKey.renamedBuiltInPresets) private var renamedBuiltInData = Data()
 
     private var hiddenBuiltInIDs: Set<UUID> {
         (try? JSONDecoder().decode(Set<UUID>.self, from: hiddenBuiltInData)) ?? []

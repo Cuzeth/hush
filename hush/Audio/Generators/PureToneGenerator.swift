@@ -23,6 +23,7 @@ final class PureToneGenerator: SoundGenerator, @unchecked Sendable {
     nonisolated(unsafe) private var phase1: Double = 0
     nonisolated(unsafe) private var phase2: Double = 0
     nonisolated(unsafe) private var phase3: Double = 0
+    nonisolated(unsafe) private var ramp = VolumeRamp()
     private let sampleRate: Double
 
     // Harmonic amplitudes relative to fundamental
@@ -36,7 +37,8 @@ final class PureToneGenerator: SoundGenerator, @unchecked Sendable {
     }
 
     nonisolated func generateMono(into buffer: UnsafeMutablePointer<Float>, frameCount: Int) {
-        let vol = Float(bitPattern: _volume.load(ordering: .relaxed))
+        let target = Float(bitPattern: _volume.load(ordering: .relaxed))
+        var (vol, volStep) = ramp.step(toward: target, frameCount: frameCount)
         let freq = Double(Float(bitPattern: _frequency.load(ordering: .relaxed)))
         let twoPi = 2.0 * Double.pi
 
@@ -50,6 +52,7 @@ final class PureToneGenerator: SoundGenerator, @unchecked Sendable {
             let harmonic3 = Float(sin(phase3)) * h3Gain
 
             buffer[i] = (fundamental + harmonic2 + harmonic3) * normalization * vol
+            vol += volStep
 
             phase1 += inc1
             phase2 += inc2

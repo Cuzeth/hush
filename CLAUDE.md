@@ -25,8 +25,10 @@ All audio-thread code is `nonisolated` and `Sendable`; generator references are 
 
 ### DSP Utilities
 
-- `AudioRNG` — fast PRNG for noise generators (xoshiro256++)
+- `AudioRNG` — fast PRNG for noise generators (xorshift32)
 - `DCBlockingFilter` — removes DC offset from brown noise output
+- `PinkNoiseCore` — shared Kellet pink-noise IIR (pink noise + speech masking)
+- `VolumeRamp` (in SoundGenerator.swift) — per-buffer gain ramp all generators use to avoid zipper noise; the atomic volume is the target, not the applied gain
 
 ### Data Model
 

@@ -41,6 +41,12 @@ struct HushApp: App {
 
         let library = UserSoundLibrary(modelContext: ModelContext(container))
         library.verify()
+        // Edited/relinked/deleted imports must drop their pre-baked loop
+        // buffer, or the engine keeps playing audio baked from the old file
+        // until app restart.
+        library.onAssetContentChanged = { assetID in
+            AudioEngine.shared.invalidateCachedBuffer(assetID: assetID)
+        }
         _userSoundLibrary = State(initialValue: library)
 
         // Wire the registry hook BEFORE any view materializes — built-in

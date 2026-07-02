@@ -2,8 +2,9 @@ import AVFoundation
 import Synchronization
 
 // Isochronic tones: a carrier sine wave amplitude-modulated by a sine envelope
-// at the target brainwave frequency. The modulation is physically present in the
-// sound (~50 dB depth), so no headphones are required — works through speakers.
+// at the target brainwave frequency. The raised-cosine envelope reaches full
+// silence each cycle, so the modulation is physically present in the sound and
+// no headphones are required — works through speakers.
 //
 // Output is mono (identical both channels). Uses the same BinauralRange targets.
 final class IsochronicToneGenerator: SoundGenerator, @unchecked Sendable {
@@ -28,6 +29,7 @@ final class IsochronicToneGenerator: SoundGenerator, @unchecked Sendable {
 
     nonisolated(unsafe) private var carrierPhase: Double = 0
     nonisolated(unsafe) private var pulsePhase: Double = 0
+    nonisolated(unsafe) private var ramp = VolumeRamp()
     private let sampleRate: Double
 
     nonisolated init(sampleRate: Double = 44100) {
@@ -39,7 +41,8 @@ final class IsochronicToneGenerator: SoundGenerator, @unchecked Sendable {
     }
 
     nonisolated func generateMono(into buffer: UnsafeMutablePointer<Float>, frameCount: Int) {
-        let vol = Float(bitPattern: _volume.load(ordering: .relaxed))
+        let target = Float(bitPattern: _volume.load(ordering: .relaxed))
+        var (vol, volStep) = ramp.step(toward: target, frameCount: frameCount)
         let carrier = Double(Float(bitPattern: _carrierFrequency.load(ordering: .relaxed)))
         let pulse = Double(Float(bitPattern: _pulseRate.load(ordering: .relaxed)))
         let twoPi = 2.0 * Double.pi
@@ -51,6 +54,7 @@ final class IsochronicToneGenerator: SoundGenerator, @unchecked Sendable {
             // Sine envelope: 0.5 * (1 + cos(pulsePhase)) ranges from 0 to 1
             let envelope = Float(0.5 * (1.0 + cos(pulsePhase)))
             buffer[i] = Float(sin(carrierPhase)) * envelope * vol
+            vol += volStep
 
             carrierPhase += carrierInc
             pulsePhase += pulseInc

@@ -64,7 +64,7 @@ final class AudioEngine: @unchecked Sendable {
     private var remoteCommandsConfigured = false
 
     // Background loading queue
-    private let loadingQueue = DispatchQueue(label: "net.hush.audio.loading", qos: .userInitiated)
+    private let loadingQueue = DispatchQueue(label: "dev.abdeen.hush.audio.loading", qos: .userInitiated)
 
     // Notification observers
     private var interruptionObserver: Any?
@@ -92,7 +92,7 @@ final class AudioEngine: @unchecked Sendable {
     private init() {
         // 200MB cache limit
         bufferCache.totalCostLimit = 200 * 1024 * 1024
-        bufferCache.name = "net.hush.audio.bufferCache"
+        bufferCache.name = "dev.abdeen.hush.audio.bufferCache"
 
         configureAudioSession()
         configureEngineGraph()
@@ -147,8 +147,14 @@ final class AudioEngine: @unchecked Sendable {
         }
     }
 
+    /// Configures the session *category* only. Activation is deferred to
+    /// `start()`/graph rebuild — activating a non-mixable .playback session
+    /// at app launch silenced the user's music before Hush played anything.
     func configureAudioSession() {
         Self.configureAudioSessionCategoryIfNeeded()
+    }
+
+    private func activateAudioSession() {
         do {
             try AVAudioSession.sharedInstance().setActive(true)
         } catch {
@@ -357,7 +363,7 @@ final class AudioEngine: @unchecked Sendable {
 
     // MARK: - Thread Safety
 
-    private func assertMainThread(_ fn: String = #function) {
+    private func assertMainThread() {
         dispatchPrecondition(condition: .onQueue(.main))
     }
 
@@ -404,18 +410,31 @@ final class AudioEngine: @unchecked Sendable {
         }
         generators[id] = generator
 
-        // Capture an unretained reference to avoid ARC retain/release on the
-        // real-time audio thread. The generator is kept alive by the `generators`
-        // dictionary. We go through AnyObject because Unmanaged requires a
-        // concrete class type, not an existential (any SoundGenerator).
-        let unmanagedGen = Unmanaged<AnyObject>.passUnretained(generator as AnyObject)
         guard let fmt = format else {
             assertionFailure("Audio format not initialized")
             return
         }
 
-        let sourceNode = AVAudioSourceNode(format: fmt) { (isSilence, _, frameCount, outputData) -> OSStatus in
-            let gen = unmanagedGen.takeUnretainedValue() as! any SoundGenerator
+        let sourceNode = makeSourceNode(for: generator, format: fmt)
+        engine.attach(sourceNode)
+        engine.connect(sourceNode, to: mixerNode, format: format)
+        sourceNodes[id] = sourceNode
+
+        logger.info("Playing generated: \(config.type.rawValue)")
+    }
+
+    /// Builds the render node in a generic context so the closure captures a
+    /// concretely-typed `Unmanaged<G>` — no ARC traffic AND no existential
+    /// dynamic cast per render cycle (swift_dynamicCast can take runtime
+    /// locks on its slow path, which is off-limits on the audio thread).
+    /// Callers pass the existential; SE-0352 opens it to bind `G`.
+    /// The generator is kept alive by the `generators` dictionary and, after
+    /// removal, briefly by `retiredGenerators`.
+    private func makeSourceNode<G: SoundGenerator>(for generator: G, format: AVAudioFormat) -> AVAudioSourceNode {
+        let unmanagedGen = Unmanaged.passUnretained(generator)
+
+        return AVAudioSourceNode(format: format) { (isSilence, _, frameCount, outputData) -> OSStatus in
+            let gen = unmanagedGen.takeUnretainedValue()
             let abl = UnsafeMutableAudioBufferListPointer(outputData)
             let frames = Int(frameCount)
 
@@ -433,12 +452,6 @@ final class AudioEngine: @unchecked Sendable {
             gen.generateStereo(left: ch0, right: ch1, frameCount: frames)
             return noErr
         }
-
-        engine.attach(sourceNode)
-        engine.connect(sourceNode, to: mixerNode, format: format)
-        sourceNodes[id] = sourceNode
-
-        logger.info("Playing generated: \(config.type.rawValue)")
     }
 
     private func addSampleSource(id: UUID, config: SourceConfiguration) {
@@ -489,7 +502,6 @@ final class AudioEngine: @unchecked Sendable {
         loadingQueue.async { [weak self] in
             let player = SampleLoopPlayer()
             player.loadAsset(asset, targetSampleRate: sr)
-            player.volume = config.volume
 
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
@@ -556,7 +568,10 @@ final class AudioEngine: @unchecked Sendable {
 
     private func finishSampleSetup(id: UUID, config: SourceConfiguration, buffer: AVAudioPCMBuffer, asset: SoundAsset) {
         let player = SampleLoopPlayer()
-        player.volume = config.volume
+        // Hold the buffer strongly: with only the node schedule + NSCache
+        // referencing it, an eviction after stop() left the source silent on
+        // the next start() (startAllPlayerNodes had nothing to reschedule).
+        player.loopBuffer = buffer
         samplePlayers[id] = player
 
         let wasAlreadyPlaying = isPlaying
@@ -593,7 +608,6 @@ final class AudioEngine: @unchecked Sendable {
 
         loadingQueue.async { [weak self] in
             let player = SampleLoopPlayer(fileName: fileName, sampleRate: sr)
-            player.volume = config.volume
 
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
@@ -650,6 +664,15 @@ final class AudioEngine: @unchecked Sendable {
             fadeOutSource(id: id) { [weak self] in
                 self?.removeAttachedSource(id: id)
             }
+        } else if generators[id] != nil, isPlaying {
+            // Ramp the generator to silence (VolumeRamp spreads the change
+            // across the next render buffer), then detach clear of the click
+            // a mid-waveform truncation would cause.
+            generators[id]?.volume = 0
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+                guard let self, self.sourceConfigurations[id] == nil else { return }
+                self.removeAttachedSource(id: id)
+            }
         } else {
             removeAttachedSource(id: id)
         }
@@ -664,7 +687,9 @@ final class AudioEngine: @unchecked Sendable {
             engine.disconnectNodeOutput(node)
             engine.detach(node)
         }
-        generators.removeValue(forKey: id)
+        if let generator = generators.removeValue(forKey: id) {
+            retireGenerator(generator)
+        }
 
         // Sample source
         if let node = playerNodes.removeValue(forKey: id) {
@@ -673,6 +698,31 @@ final class AudioEngine: @unchecked Sendable {
             engine.detach(node)
         }
         samplePlayers.removeValue(forKey: id)
+    }
+
+    /// Render callbacks hold generators unretained, and AVAudioEngine doesn't
+    /// document that detach() waits out an in-flight render cycle. Dropping
+    /// the last strong reference synchronously after detach therefore races a
+    /// possible use-after-free on the audio thread. Park retired generators
+    /// briefly instead; half a second is orders of magnitude past any render
+    /// cycle.
+    private var retiredGenerators: [any SoundGenerator] = []
+
+    private func retireGenerator(_ generator: any SoundGenerator) {
+        retiredGenerators.append(generator)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            guard let self, !self.retiredGenerators.isEmpty else { return }
+            self.retiredGenerators.removeFirst()
+        }
+    }
+
+    /// Drops the pre-baked loop buffer for one asset. Must be called when a
+    /// user import's audio changes (relink, crossfade edit, delete) — the
+    /// cache would otherwise keep serving a buffer baked from the old file
+    /// or old crossfade until the app restarts.
+    func invalidateCachedBuffer(assetID: String) {
+        assertMainThread()
+        bufferCache.removeObject(forKey: assetID as NSString)
     }
 
     func removeAllSources() {
@@ -817,6 +867,7 @@ final class AudioEngine: @unchecked Sendable {
         }
 
         configureAudioSession()
+        activateAudioSession()
 
         do {
             if !engine.isRunning {
@@ -1056,8 +1107,16 @@ final class AudioEngine: @unchecked Sendable {
 
     private static let defaultNowPlayingIcon = "waveform"
 
+    /// Memoized per symbol — rasterizing 600×600 on the main thread on every
+    /// updateNowPlaying (each start()/rebuild) was measurable jank for an
+    /// image that only changes when the preset icon does.
+    private var cachedArtwork: (symbol: String, artwork: MPMediaItemArtwork)?
+
     private func renderNowPlayingArtwork() -> MPMediaItemArtwork? {
         let symbolName = currentPresetIcon ?? Self.defaultNowPlayingIcon
+        if let cached = cachedArtwork, cached.symbol == symbolName {
+            return cached.artwork
+        }
         let size = CGSize(width: 600, height: 600)
 
         let renderer = UIGraphicsImageRenderer(size: size)
@@ -1099,7 +1158,9 @@ final class AudioEngine: @unchecked Sendable {
             tinted.draw(at: origin)
         }
 
-        return MPMediaItemArtwork(boundsSize: size) { _ in image }
+        let artwork = MPMediaItemArtwork(boundsSize: size) { _ in image }
+        cachedArtwork = (symbolName, artwork)
+        return artwork
     }
 
     private func updateNowPlaying() {
@@ -1153,6 +1214,7 @@ final class AudioEngine: @unchecked Sendable {
 
         if shouldResumePlayback && !configs.isEmpty {
             do {
+                activateAudioSession()
                 try engine.start()
                 isPlaying = true
                 startAllPlayerNodes()
