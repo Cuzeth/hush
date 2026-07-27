@@ -5,6 +5,9 @@ import UIKit
 struct ContentView: View {
     @State private var viewModel = PlayerViewModel()
     @Environment(UserSoundLibrary.self) private var userSoundLibrary
+    /// Optional so `#Preview` and any other host that doesn't run the launch
+    /// sequence can still mount this view.
+    @Environment(LaunchCoordinator.self) private var launchCoordinator: LaunchCoordinator?
     @AppStorage("autoResumeLast") private var autoResumeLast = false
     @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
     @AppStorage("appearance") private var appearanceRaw: String = Appearance.system.rawValue
@@ -51,6 +54,10 @@ struct ContentView: View {
             }
             viewModel.handleScenePhaseChange(.active)
             applyAppearance(appearance)
+            // The first screen is mounted. The launch overlay holds its final
+            // frame until this lands, then cuts away. Idempotent, because this
+            // onAppear re-fires when the Group swaps views or the scene resumes.
+            launchCoordinator?.markFirstScreenReady()
         }
         .onChange(of: scenePhase) { _, newPhase in
             viewModel.handleScenePhaseChange(newPhase)

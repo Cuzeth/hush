@@ -8,6 +8,9 @@ private let appLogger = Logger(subsystem: "dev.abdeen.hush", category: "HushApp"
 struct HushApp: App {
     let sharedModelContainer: ModelContainer
     @State private var userSoundLibrary: UserSoundLibrary
+    /// Owned here, not by a view, so the launch sequence runs exactly once per
+    /// app process — scene resumes and view rebuilds can't restart it.
+    @State private var launchCoordinator = LaunchCoordinator()
     /// Set when ModelContainer creation falls back to an in-memory store —
     /// presets and imports won't persist this session, and the user needs to
     /// know that. Surfaced as an alert via PlayerViewModel.errorMessage.
@@ -62,8 +65,9 @@ struct HushApp: App {
 
     var body: some Scene {
         WindowGroup {
-            ContentView(storageFailureMessage: storageFailureMessage)
+            RootView(storageFailureMessage: storageFailureMessage)
                 .environment(userSoundLibrary)
+                .environment(launchCoordinator)
         }
         .modelContainer(sharedModelContainer)
     }
