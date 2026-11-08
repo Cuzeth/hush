@@ -74,7 +74,11 @@ final class LaunchAnimationHostView: UIView {
         isUserInteractionEnabled = false
         clipsToBounds = true
 
-        animationView.contentMode = .scaleAspectFill
+        // Fit, not fill: the artwork is portrait, and filling iPhone Duo's
+        // wide inner display (or an iPad) blew the mark up ~2.4x and cropped
+        // it. The field is flat LaunchBackground, so letterboxing is
+        // invisible. Must match the LaunchScreen.storyboard image view.
+        animationView.contentMode = .scaleAspectFit
         animationView.loopMode = .playOnce
         // Pauses on resign-active and restores progress on return, so an
         // interrupted launch picks up instead of replaying.

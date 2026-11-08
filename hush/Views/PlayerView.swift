@@ -35,44 +35,43 @@ struct PlayerView: View {
         sizeClass == .regular ? 600 : .infinity
     }
 
+    /// Measured width and fold position; picks one column or two panes.
+    @State private var paneGeometry = PlayerPaneGeometry()
+
+    private var paneLayout: PlayerPaneLayout {
+        PlayerPaneLayout.resolve(
+            isRegularWidth: sizeClass == .regular,
+            containerWidth: paneGeometry.width,
+            folds: paneGeometry.folds
+        )
+    }
+
     var body: some View {
         NavigationStack {
             ZStack {
                 HushBackdrop()
 
-                ScrollView(showsIndicators: false) {
-                    VStack(spacing: 16) {
-                        nowPlayingHeader
-                        mixerSection
-                        PresetSelector(
-                            onSelect: { preset in viewModel.loadPreset(preset) },
-                            onRandom: { viewModel.randomMix() },
-                            onDelete: { preset in viewModel.handlePresetDeleted(preset) },
-                            selectedPreset: viewModel.currentPreset,
-                            isPlaying: viewModel.isPlaying,
-                            onRename: { id, name in viewModel.handlePresetRenamed(id: id, newName: name) },
-                            onHide: { preset in showHiddenSceneUndo(for: preset) }
-                        )
+                switch paneLayout {
+                case .singleColumn:
+                    singleColumn
+                case let .split(leading, gutter, trailing):
+                    // Split at the fold (iPhone Duo) or down the middle
+                    // (iPad): no control ever straddles the crease.
+                    HStack(spacing: 0) {
+                        playerPane
+                            .frame(width: leading)
+                        Color.clear
+                            .frame(width: gutter)
+                            .accessibilityHidden(true)
+                        scenesPane
+                            .frame(width: trailing)
                     }
-                    .padding(.horizontal, 20)
-                    .padding(.top, 8)
-                    .frame(maxWidth: contentMaxWidth)
-                    .frame(maxWidth: .infinity)
                 }
-                .safeAreaInset(edge: .bottom, spacing: 0) {
-                    VStack(spacing: 0) {
-                        undoToast
-                        transportBar
-                    }
-                    .animation(reduceMotion ? nil : HushMotion.standard, value: undoToastID)
-                    .frame(maxWidth: contentMaxWidth)
-                    .frame(maxWidth: .infinity)
-                }
-                .safeAreaInset(edge: .top, spacing: 0) {
-                    warningBanner
-                        .frame(maxWidth: contentMaxWidth)
-                        .frame(maxWidth: .infinity)
-                }
+            }
+            .onGeometryChange(for: PlayerPaneGeometry.self) { proxy in
+                PlayerPaneGeometry(width: proxy.size.width, folds: PlayerPaneLayout.foldFrames(in: proxy))
+            } action: { geometry in
+                paneGeometry = geometry
             }
             .navigationTitle("Hush")
             .navigationBarTitleDisplayMode(.large)
@@ -128,6 +127,78 @@ struct PlayerView: View {
                 .presentationDragIndicator(.visible)
             }
         }
+    }
+
+    // MARK: - Layouts
+
+    /// iPhone, iPhone Duo closed, and any space too narrow (or folded the
+    /// wrong way) for two panes.
+    private var singleColumn: some View {
+        ScrollView(showsIndicators: false) {
+            VStack(spacing: 16) {
+                nowPlayingHeader
+                mixerSection
+                presetSelector
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 8)
+            .frame(maxWidth: contentMaxWidth)
+            .frame(maxWidth: .infinity)
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            bottomBar
+                .frame(maxWidth: contentMaxWidth)
+                .frame(maxWidth: .infinity)
+        }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            warningBanner
+                .frame(maxWidth: contentMaxWidth)
+                .frame(maxWidth: .infinity)
+        }
+    }
+
+    /// Leading pane in the split: the mix and its transport.
+    private var playerPane: some View {
+        ScrollView(showsIndicators: false) {
+            VStack(spacing: 16) {
+                nowPlayingHeader
+                mixerSection
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 8)
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) { bottomBar }
+        .safeAreaInset(edge: .top, spacing: 0) { warningBanner }
+    }
+
+    /// Trailing pane in the split: the scene list, scrolling on its own.
+    private var scenesPane: some View {
+        ScrollView(showsIndicators: false) {
+            presetSelector
+                .padding(.horizontal, 20)
+                .padding(.top, 8)
+                .padding(.bottom, 20)
+        }
+    }
+
+    private var presetSelector: some View {
+        PresetSelector(
+            onSelect: { preset in viewModel.loadPreset(preset) },
+            onRandom: { viewModel.randomMix() },
+            onDelete: { preset in viewModel.handlePresetDeleted(preset) },
+            selectedPreset: viewModel.currentPreset,
+            isPlaying: viewModel.isPlaying,
+            onRename: { id, name in viewModel.handlePresetRenamed(id: id, newName: name) },
+            onHide: { preset in showHiddenSceneUndo(for: preset) }
+        )
+    }
+
+    private var bottomBar: some View {
+        VStack(spacing: 0) {
+            undoToast
+            transportBar
+        }
+        .animation(reduceMotion ? nil : HushMotion.standard, value: undoToastID)
     }
 
     // MARK: - Toolbar
