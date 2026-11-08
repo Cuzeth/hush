@@ -38,6 +38,11 @@ struct PlayerView: View {
     /// Measured width and fold position; picks one column or two panes.
     @State private var paneGeometry = PlayerPaneGeometry()
 
+    /// Single column: keeps the scene list still while the panels above it
+    /// resize for a newly loaded mix.
+    @State private var scrollPosition = ScrollPosition()
+    @State private var sceneListAnchor = SceneListAnchor()
+
     private var paneLayout: PlayerPaneLayout {
         PlayerPaneLayout.resolve(
             isRegularWidth: sizeClass == .regular,
@@ -76,11 +81,7 @@ struct PlayerView: View {
             .navigationTitle("Hush")
             .navigationBarTitleDisplayMode(.large)
             .toolbar { toolbarItems }
-            .sensoryFeedback(.selection, trigger: viewModel.isPlaying)
-            .sensoryFeedback(.selection, trigger: viewModel.currentPreset?.id)
-            .sensoryFeedback(.impact(weight: .light), trigger: viewModel.showMixer)
-            .sensoryFeedback(.impact(weight: .light), trigger: viewModel.activeSources.count)
-            .sensoryFeedback(.success, trigger: saveFeedbackCount)
+            .modifier(PlayerHaptics(viewModel: viewModel, saveFeedbackCount: saveFeedbackCount))
             .tint(HushPalette.accentSoft)
             .onAppear(perform: startFirstSceneAfterOnboardingIfNeeded)
             // One toast at a time, newest wins: a fresh layer removal
@@ -136,14 +137,24 @@ struct PlayerView: View {
     private var singleColumn: some View {
         ScrollView(showsIndicators: false) {
             VStack(spacing: 16) {
-                nowPlayingHeader
-                mixerSection
+                VStack(spacing: 16) {
+                    nowPlayingHeader
+                    mixerSection
+                }
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { old, new in
+                    keepSceneListInPlace(abovePanelsGrewBy: new - old)
+                }
                 presetSelector
             }
             .padding(.horizontal, 20)
             .padding(.top, 8)
             .frame(maxWidth: contentMaxWidth)
             .frame(maxWidth: .infinity)
+        }
+        .scrollPosition($scrollPosition)
+        .onScrollGeometryChange(for: ScrollGeometry.self) { $0 } action: { _, geometry in
+            // A reference write, not @State: this runs every scroll frame.
+            sceneListAnchor.geometry = geometry
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             bottomBar
@@ -183,8 +194,14 @@ struct PlayerView: View {
 
     private var presetSelector: some View {
         PresetSelector(
-            onSelect: { preset in viewModel.loadPreset(preset) },
-            onRandom: { viewModel.randomMix() },
+            onSelect: { preset in
+                sceneListAnchor.armForSceneSwap()
+                viewModel.loadPreset(preset)
+            },
+            onRandom: {
+                sceneListAnchor.armForSceneSwap()
+                viewModel.randomMix()
+            },
             onDelete: { preset in viewModel.handlePresetDeleted(preset) },
             selectedPreset: viewModel.currentPreset,
             isPlaying: viewModel.isPlaying,
@@ -570,6 +587,25 @@ struct PlayerView: View {
         viewModel.loadPreset(first)
     }
 
+    // MARK: - Scene List Anchoring
+
+    /// The scene list sits under the Now Playing and Customize panels, which
+    /// change height with the layer count. Left alone, loading a scene with
+    /// more (or fewer) layers slid the tapped row out from under the finger.
+    /// Right after a scene tap, scroll by the same amount, on the same curve,
+    /// so the row holds still and the panels above move instead.
+    private func keepSceneListInPlace(abovePanelsGrewBy delta: CGFloat) {
+        guard paneLayout == .singleColumn,
+              let target = sceneListAnchor.compensatedOffset(forGrowth: delta) else { return }
+        if reduceMotion {
+            scrollPosition.scrollTo(y: target)
+        } else {
+            withAnimation(HushMotion.sceneSwap) {
+                scrollPosition.scrollTo(y: target)
+            }
+        }
+    }
+
     // MARK: - Helpers
 
     private var currentTitle: String {
@@ -591,6 +627,68 @@ struct PlayerView: View {
         }
     }
 
+}
+
+/// Scroll bookkeeping for keeping the scene list still across a scene swap.
+/// A class held in @State so the per-frame geometry write doesn't re-render
+/// the player.
+final class SceneListAnchor {
+    var geometry: ScrollGeometry?
+    /// Growth above the list counts as the swap's only until this moment.
+    private var armedUntil: Date = .distantPast
+
+    /// How long after a tap the panels' resize is still the swap's doing.
+    static let window: TimeInterval = 0.6
+
+    func armForSceneSwap(now: Date = .now) {
+        armedUntil = now.addingTimeInterval(Self.window)
+    }
+
+    /// The offset that keeps the content below the panels where it was, or
+    /// nil when nothing should move: not armed, no change, or no geometry yet.
+    func compensatedOffset(forGrowth delta: CGFloat, now: Date = .now) -> CGFloat? {
+        guard now < armedUntil, abs(delta) >= 0.5, let geometry else { return nil }
+        return Self.clampedOffset(geometry.contentOffset.y + delta, in: geometry, grownBy: delta)
+    }
+
+    /// Keeps the target inside the scrollable range of the content as it
+    /// will be once the panels have resized.
+    static func clampedOffset(_ y: CGFloat, in geometry: ScrollGeometry, grownBy delta: CGFloat) -> CGFloat {
+        let minY = -geometry.contentInsets.top
+        let contentHeight = geometry.contentSize.height + delta
+        let maxY = max(minY, contentHeight + geometry.contentInsets.bottom - geometry.containerSize.height)
+        return min(max(y, minY), maxY)
+    }
+}
+
+private struct PlayerHaptics: ViewModifier {
+    let viewModel: PlayerViewModel
+    let saveFeedbackCount: Int
+
+    func body(content: Content) -> some View {
+        content
+            .sensoryFeedback(.selection, trigger: viewModel.isPlaying)
+            .sensoryFeedback(.selection, trigger: viewModel.currentPreset?.id)
+            .sensoryFeedback(.impact(weight: .light), trigger: viewModel.showMixer)
+            // One tap per add or remove. A whole-mix swap already gets the
+            // scene selection tick; firing this too stacked two haptics.
+            .sensoryFeedback(.impact(weight: .light), trigger: LayerCountChange(viewModel)) { old, new in
+                old.mixGeneration == new.mixGeneration && old.count != new.count
+            }
+            .sensoryFeedback(.success, trigger: saveFeedbackCount)
+    }
+}
+
+/// Layer count tagged with the mix it belongs to, so the add/remove haptic
+/// can skip whole-mix swaps.
+private struct LayerCountChange: Equatable {
+    let count: Int
+    let mixGeneration: Int
+
+    @MainActor init(_ viewModel: PlayerViewModel) {
+        count = viewModel.activeSources.count
+        mixGeneration = viewModel.mixGeneration
+    }
 }
 
 /// A scene the user just hid, kept while its Undo toast is on screen.
