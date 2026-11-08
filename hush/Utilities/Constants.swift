@@ -28,6 +28,8 @@ enum AudioConstants {
 enum PrefsKey {
     nonisolated static let hiddenBuiltInPresets = "hiddenBuiltInPresets"
     nonisolated static let renamedBuiltInPresets = "renamedBuiltInPresets"
+    /// The user's scene order, JSON `[UUID]` (`SceneOrderStore`).
+    nonisolated static let sceneOrder = "sceneOrder"
     nonisolated static let beatSafetySeen = "hasSeenBeatSafetyWarning"
 }
 
