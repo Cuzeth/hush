@@ -203,10 +203,13 @@ private struct SourceRow: View {
             Slider(value: $volume, in: 0...1)
             .tint(HushPalette.accentSoft)
             .onChange(of: volume) {
+                // Skip the echo of a sync from the view model below.
+                guard volume != source.volume else { return }
                 viewModel.updateVolume(for: source, volume: volume)
             }
             .accessibilityLabel("\(source.displayName) volume")
             .accessibilityValue("\(Int(volume * 100)) percent")
+            .sensoryFeedback(.selection, trigger: Int(volume * 10))
 
             if isToneType {
                 ToneFrequencyPicker(selected: source.toneFrequency) { freq in
@@ -223,12 +226,23 @@ private struct SourceRow: View {
             if source.type == .speechMasking {
                 MaskingStrengthSlider(strength: $maskingStrength)
                     .onChange(of: maskingStrength) {
+                        guard maskingStrength != (source.maskingStrength ?? 0.5) else { return }
                         viewModel.updateMaskingStrength(for: source, strength: maskingStrength)
                     }
             }
         }
         .padding(18)
         .hushPanel(radius: HushRadius.lg)
+        // The local @State keeps dragging smooth, but it only seeds once per
+        // row identity. Presets reuse source UUIDs, so reloading one keeps
+        // this row alive with a new level: follow the view model's value.
+        .onChange(of: source.volume) { _, newValue in
+            if volume != newValue { volume = newValue }
+        }
+        .onChange(of: source.maskingStrength) { _, newValue in
+            let strength = newValue ?? 0.5
+            if maskingStrength != strength { maskingStrength = strength }
+        }
         .fileImporter(
             isPresented: $showRelinkPicker,
             allowedContentTypes: [.audio],
@@ -241,9 +255,10 @@ private struct SourceRow: View {
             do {
                 try library.relink(asset, to: url)
                 relinkError = nil
-                // Re-attach the existing source so the engine picks up the new
-                // file without changing the row's UUID, volume, or position.
-                viewModel.relinkSource(source)
+                // One relink path for every entry point (here and Settings →
+                // Imported Sounds): the view model re-attaches every layer
+                // using this asset and clears the missing banner.
+                viewModel.handleUserAssetRelinked(assetID: asset.assetID)
             } catch {
                 // Validation failures (too large, wrong format…) used to be
                 // swallowed by try? — the tap just did nothing.
@@ -277,6 +292,7 @@ struct SoundPickerGrid: View {
     @State private var showFileImporter = false
     @State private var pendingImportURL: ImportURL?
     @State private var importerError: String?
+    @State private var searchQuery = ""
 
     private var columns: [GridItem] {
         let count = sizeClass == .regular ? 3 : 2
@@ -284,7 +300,11 @@ struct SoundPickerGrid: View {
     }
 
     private var activeAssetIDs: Set<String> {
-        Set(activeSources.compactMap(\.assetID))
+        SoundSearch.activeAssetIDs(in: activeSources)
+    }
+
+    private var isSearching: Bool {
+        !SoundSearch.normalized(searchQuery).isEmpty
     }
 
     private var activeGeneratedTypes: Set<SoundType> {
@@ -314,24 +334,31 @@ struct SoundPickerGrid: View {
 
                 ScrollView(showsIndicators: false) {
                     VStack(alignment: .leading, spacing: 24) {
-                        mySoundsSection
+                        if isSearching {
+                            // Matches across every category in one flat,
+                            // already-expanded grid.
+                            searchResultsSection
+                        } else {
+                            mySoundsSection
 
-                        // Generated section
-                        soundSection(
-                            title: "Generated",
-                            subtitle: "Noise and tones created live on this device",
-                            sounds: availableGenerated
-                        )
+                            // Generated section
+                            soundSection(
+                                title: "Generated",
+                                subtitle: "Noise and tones created live on this device",
+                                sounds: availableGenerated
+                            )
 
-                        // Sample categories
-                        ForEach(categoriesWithAssets) { category in
-                            categorySection(category)
+                            // Sample categories
+                            ForEach(categoriesWithAssets) { category in
+                                categorySection(category)
+                            }
                         }
                     }
                     .padding(.horizontal, 20)
                     .padding(.top, 16)
                     .padding(.bottom, 28)
                 }
+                .scrollDismissesKeyboard(.immediately)
 
                 if let importerError {
                     VStack {
@@ -367,6 +394,11 @@ struct SoundPickerGrid: View {
             }
             .navigationTitle("Add Sound")
             .navigationBarTitleDisplayMode(.inline)
+            .searchable(
+                text: $searchQuery,
+                placement: .navigationBarDrawer(displayMode: .always),
+                prompt: "Search sounds"
+            )
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Done") { dismiss() }
@@ -437,6 +469,68 @@ struct SoundPickerGrid: View {
                         )
                     }
                     .buttonStyle(HushPressButtonStyle())
+                }
+            }
+        }
+    }
+
+    // MARK: - Search results
+
+    @ViewBuilder private var searchResultsSection: some View {
+        let query = SoundSearch.normalized(searchQuery)
+        let userMatches = SoundSearch.filter(availableUserAssets, query: query)
+        let generatedMatches = availableGenerated.filter { SoundSearch.matches($0.rawValue, query: query) }
+        let recordedMatches = SoundSearch.filter(
+            SoundAssetRegistry.bundled.filter { !activeAssetIDs.contains($0.id) },
+            query: query
+        )
+        let total = userMatches.count + generatedMatches.count + recordedMatches.count
+
+        VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Results")
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(HushPalette.textPrimary)
+
+                Text(total == 0
+                     ? "No sounds match \u{201C}\(query)\u{201D}"
+                     : "\(total) sound\(total == 1 ? "" : "s")")
+                    .font(.subheadline)
+                    .foregroundStyle(HushPalette.textSecondary)
+            }
+            .accessibilityElement(children: .combine)
+
+            if total > 0 {
+                LazyVGrid(columns: columns, spacing: 14) {
+                    ForEach(userMatches) { asset in
+                        Button {
+                            onSelectAsset(asset)
+                            dismiss()
+                        } label: {
+                            SoundCardLabel(icon: asset.icon, title: asset.displayName, tag: "Imported")
+                        }
+                        .buttonStyle(HushPressButtonStyle())
+                    }
+
+                    ForEach(generatedMatches) { type in
+                        Button {
+                            onSelect(type)
+                            dismiss()
+                        } label: {
+                            SoundCardLabel(icon: type.icon, title: type.rawValue, tag: "Generated")
+                        }
+                        .buttonStyle(HushPressButtonStyle())
+                    }
+
+                    ForEach(recordedMatches) { asset in
+                        Button {
+                            onSelectAsset(asset)
+                            dismiss()
+                        } label: {
+                            SoundCardLabel(icon: asset.icon, title: asset.displayName, tag: asset.category.rawValue)
+                        }
+                        .buttonStyle(HushPressButtonStyle())
+                    }
                 }
             }
         }
@@ -603,27 +697,42 @@ private struct SoundCardLabel: View {
 // EditPresetSheet (local state). Callers own the state and the write path.
 
 /// Shared chip style for picker rows (also reused by ImportSoundSheet).
-/// Target height is 44pt to satisfy WCAG 2.5.8.
+/// Target height is 44pt to satisfy WCAG 2.5.8. Selection is never shown by
+/// color alone: the selected chip also carries a checkmark and an outline.
+/// Callers add the `.isSelected` trait on the Button.
 struct HushChipLabel: View {
     let text: String
     let isSelected: Bool
 
     var body: some View {
-        Text(text)
-            .font(.footnote.weight(.semibold))
-            .foregroundStyle(isSelected ? HushPalette.textPrimary : HushPalette.textSecondary)
-            .padding(.horizontal, 14)
-            .frame(minHeight: 44)
-            .background(
-                Capsule()
-                    .fill(isSelected ? HushPalette.chipActive : HushPalette.chipMuted)
-            )
+        HStack(spacing: 5) {
+            if isSelected {
+                Image(systemName: "checkmark")
+                    .font(.caption2.weight(.bold))
+                    .accessibilityHidden(true)
+            }
+            Text(text)
+                .font(.footnote.weight(.semibold))
+        }
+        .foregroundStyle(isSelected ? HushPalette.textPrimary : HushPalette.textSecondary)
+        .padding(.horizontal, 14)
+        .frame(minHeight: 44)
+        .background(
+            Capsule()
+                .fill(isSelected ? HushPalette.chipActive : HushPalette.chipMuted)
+                .overlay(
+                    Capsule()
+                        .strokeBorder(isSelected ? HushPalette.accentSoft : Color.clear, lineWidth: 1)
+                )
+        )
     }
 }
 
 struct ToneFrequencyPicker: View {
     let selected: Float?
     let onSelect: (Float) -> Void
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
@@ -634,7 +743,8 @@ struct ToneFrequencyPicker: View {
                         HushChipLabel(text: preset.label, isSelected: isSelected)
                     }
                     .buttonStyle(HushPressButtonStyle())
-                    .animation(HushMotion.quick, value: selected)
+                    .accessibilityAddTraits(isSelected ? .isSelected : [])
+                    .animation(reduceMotion ? nil : HushMotion.quick, value: selected)
                 }
             }
         }
@@ -646,6 +756,8 @@ struct BinauralRangePicker: View {
     let selected: BinauralRange?
     let onSelect: (BinauralRange) -> Void
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
@@ -655,7 +767,8 @@ struct BinauralRangePicker: View {
                         HushChipLabel(text: range.rawValue, isSelected: isSelected)
                     }
                     .buttonStyle(HushPressButtonStyle())
-                    .animation(HushMotion.quick, value: selected)
+                    .accessibilityAddTraits(isSelected ? .isSelected : [])
+                    .animation(reduceMotion ? nil : HushMotion.quick, value: selected)
                 }
             }
         }
@@ -686,5 +799,34 @@ struct MaskingStrengthSlider: View {
         // Subtle click every 10% during drag — matches TimerView's per-detent
         // model so the haptic language is consistent across sliders.
         .sensoryFeedback(.selection, trigger: Int(strength * 10))
+    }
+}
+
+// MARK: - Sound picker search
+
+/// Pure helpers behind the "Add Sound" picker: which assets are already in
+/// the mix, and the search filter.
+enum SoundSearch {
+    /// Assets already layered, so the picker doesn't offer them twice.
+    /// Legacy-typed sources (`.rain`, `.ocean`…) carry no `assetID` but play
+    /// their type's default asset, so they count too.
+    static func activeAssetIDs(in sources: [SoundSource]) -> Set<String> {
+        Set(sources.compactMap { $0.assetID ?? $0.type.defaultAssetID })
+    }
+
+    static func normalized(_ query: String) -> String {
+        query.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Case- and diacritic-insensitive substring match. An empty query
+    /// matches everything.
+    static func matches(_ name: String, query: String) -> Bool {
+        let query = normalized(query)
+        guard !query.isEmpty else { return true }
+        return name.localizedStandardContains(query)
+    }
+
+    static func filter(_ assets: [SoundAsset], query: String) -> [SoundAsset] {
+        assets.filter { matches($0.displayName, query: query) }
     }
 }

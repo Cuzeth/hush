@@ -6,13 +6,24 @@ import UniformTypeIdentifiers
 /// sound with disk usage and the same edit/relink/delete actions you can
 /// reach via long-press in the mixer.
 struct UserSoundManagementView: View {
+    let viewModel: PlayerViewModel
+
     @Environment(UserSoundLibrary.self) private var library
     @Environment(\.dismiss) private var dismiss
 
+    /// What the one file importer is picking a file for. SwiftUI presents
+    /// only one `.fileImporter` per view, so import and relink share it.
+    private enum ImporterMode {
+        case importNew
+        case relink(UserSoundAsset)
+    }
+
+    // Explicit Bool + separate mode state: a binding derived from the mode
+    // (`isPresented: mode != nil`) would nil it on dismissal, racing the
+    // completion that reads it.
     @State private var showImporter = false
+    @State private var importerMode: ImporterMode = .importNew
     @State private var editingAsset: UserSoundAsset?
-    @State private var relinkAsset: UserSoundAsset?
-    @State private var showRelinkImporter = false
     @State private var pendingNewImportURL: ImportURL?
     @State private var importerError: String?
 
@@ -67,6 +78,7 @@ struct UserSoundManagementView: View {
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
+                    importerMode = .importNew
                     showImporter = true
                 } label: {
                     Image(systemName: "plus")
@@ -80,12 +92,16 @@ struct UserSoundManagementView: View {
             allowedContentTypes: [.audio],
             allowsMultipleSelection: false
         ) { result in
-            switch result {
-            case .success(let urls):
+            let mode = importerMode
+            importerMode = .importNew
+            switch (mode, result) {
+            case (.importNew, .success(let urls)):
                 if let first = urls.first {
                     pendingNewImportURL = ImportURL(url: first)
                 }
-            case .failure(let error):
+            case (.relink(let asset), .success(let urls)):
+                if let url = urls.first { relink(asset, to: url) }
+            case (_, .failure(let error)):
                 showImporterError(error.localizedDescription)
             }
         }
@@ -95,29 +111,27 @@ struct UserSoundManagementView: View {
         .sheet(item: $pendingNewImportURL) { wrap in
             ImportSoundSheet(mode: .newImport(sourceURL: wrap.url), library: library)
         }
-        // Explicit Bool + separate asset state: the old derived binding
-        // (`isPresented: relinkAsset != nil`) nilled the asset on dismissal
-        // and the completion re-read it — worked only because completion
-        // happens to fire before dismissal.
-        .fileImporter(
-            isPresented: $showRelinkImporter,
-            allowedContentTypes: [.audio],
-            allowsMultipleSelection: false
-        ) { result in
-            defer { relinkAsset = nil }
-            guard let asset = relinkAsset else { return }
-            if case .success(let urls) = result, let url = urls.first {
-                let scoped = url.startAccessingSecurityScopedResource()
-                defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-                do {
-                    try library.relink(asset, to: url)
-                } catch let error as UserSoundImportError {
-                    showImporterError(error.errorDescription ?? "Couldn't relink.")
-                } catch {
-                    showImporterError("Couldn't relink.")
-                }
-            }
+    }
+
+    private func relink(_ asset: UserSoundAsset, to url: URL) {
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+        do {
+            try library.relink(asset, to: url)
+            // Clears the missing banner and re-attaches any layer using it.
+            viewModel.handleUserAssetRelinked(assetID: asset.assetID)
+        } catch let error as UserSoundImportError {
+            showImporterError(error.errorDescription ?? "Couldn't relink.")
+        } catch {
+            showImporterError("Couldn't relink.")
         }
+    }
+
+    private func delete(_ asset: UserSoundAsset) {
+        // Read the ID first: the record is gone after delete.
+        let assetID = asset.assetID
+        library.delete(asset)
+        viewModel.handleUserAssetDeleted(assetID: assetID)
     }
 
     @ViewBuilder private var emptyState: some View {
@@ -146,10 +160,10 @@ struct UserSoundManagementView: View {
                         asset: asset,
                         onEdit: { editingAsset = asset },
                         onRelink: {
-                            relinkAsset = asset
-                            showRelinkImporter = true
+                            importerMode = .relink(asset)
+                            showImporter = true
                         },
-                        onDelete: { library.delete(asset) }
+                        onDelete: { delete(asset) }
                     )
                 }
             }

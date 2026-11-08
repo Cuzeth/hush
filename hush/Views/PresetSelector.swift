@@ -12,6 +12,13 @@ struct PresetSelector: View {
     let onRandom: () -> Void
     let onDelete: (Preset) -> Void
     var selectedPreset: Preset?
+    /// Drives the row hint: a selected scene is only "playing" when it is.
+    var isPlaying = false
+    /// Called after any rename is persisted, with the scene's id and new name.
+    var onRename: (UUID, String) -> Void = { _, _ in }
+    /// Called right after a built-in scene is hidden (before `onDelete`), so
+    /// the host can offer Undo.
+    var onHide: (Preset) -> Void = { _ in }
 
     @Query(sort: \SavedPreset.createdAt, order: .reverse)
     private var savedPresets: [SavedPreset]
@@ -28,47 +35,23 @@ struct PresetSelector: View {
     @AppStorage(PrefsKey.renamedBuiltInPresets) private var renamedBuiltInData = Data()
 
     private var hiddenBuiltInIDs: Set<UUID> {
-        (try? JSONDecoder().decode(Set<UUID>.self, from: hiddenBuiltInData)) ?? []
+        BuiltInSceneStore.decodeHidden(hiddenBuiltInData)
     }
 
     private var renamedBuiltIns: [UUID: String] {
-        (try? JSONDecoder().decode([UUID: String].self, from: renamedBuiltInData)) ?? [:]
-    }
-
-    // Saved presets keyed by stableID for quick lookup
-    private var savedByID: [UUID: SavedPreset] {
-        Dictionary(uniqueKeysWithValues: savedPresets.map { ($0.stableID, $0) })
+        BuiltInSceneStore.decodeRenamed(renamedBuiltInData)
     }
 
     /// Merged preset list: built-in slots (replaced by saved version if edited),
     /// followed by user-created presets that don't replace a built-in.
     private var orderedPresets: [(preset: Preset, saved: SavedPreset?)] {
-        let builtInIDs = Set(Preset.builtIn.map(\.id))
-        // Hoist the @AppStorage JSON decodes out of the loop — the computed
-        // properties decode their Data blob on every access.
-        let hidden = hiddenBuiltInIDs
-        let renamed = renamedBuiltIns
-        var result: [(Preset, SavedPreset?)] = []
-
-        // Built-in slots in original order
-        for builtIn in Preset.builtIn {
-            if let saved = savedByID[builtIn.id] {
-                // Edited built-in — show saved version in the built-in's slot
-                result.append((saved.toPreset(), saved))
-            } else if !hidden.contains(builtIn.id) {
-                // Unedited, not hidden
-                var p = builtIn
-                if let newName = renamed[builtIn.id] { p.name = newName }
-                result.append((p, nil))
-            }
-        }
-
-        // User-created presets (not replacing a built-in)
-        for saved in savedPresets where !builtInIDs.contains(saved.stableID) {
-            result.append((saved.toPreset(), saved))
-        }
-
-        return result
+        SceneOrdering.ordered(
+            saved: savedPresets,
+            stableID: \.stableID,
+            toPreset: { $0.toPreset() },
+            hidden: hiddenBuiltInIDs,
+            renamed: renamedBuiltIns
+        )
     }
 
     var body: some View {
@@ -94,57 +77,43 @@ struct PresetSelector: View {
                 let saved = entry.saved
                 let selected = selectedPreset?.id == preset.id
                 let target = DeleteTarget(preset: preset, saved: saved)
+                let summary = presetSummary(preset)
 
                 Button { onSelect(preset) } label: {
                     presetRow(
                         icon: preset.icon,
                         name: preset.name,
-                        detail: presetSummary(preset),
-                        isSelected: selected
+                        detail: summary,
+                        isSelected: selected,
+                        reservesMenuSpace: true
                     )
                 }
                 .buttonStyle(HushRowButtonStyle())
-                .accessibilityLabel("\(preset.name). \(presetSummary(preset))")
-                .accessibilityHint(selected ? "Currently playing" : "Plays this scene")
+                .accessibilityLabel("\(preset.name). \(summary)")
+                .accessibilityHint(selected && isPlaying ? "Currently playing" : "Plays this scene")
                 .accessibilityAddTraits(selected ? .isSelected : [])
+                // Same actions as the visible menu and the long-press menu,
+                // reachable from the VoiceOver rotor.
+                .accessibilityAction(named: "Edit Sounds") { presetToEdit = preset }
+                .accessibilityAction(named: "Rename") { beginRename(preset: preset, saved: saved) }
+                .accessibilityAction(named: target.kind.actionTitle) { performAction(target) }
                 .contextMenu {
-                    Button {
-                        presetToEdit = preset
+                    sceneActions(preset: preset, saved: saved, target: target)
+                }
+                // Visible entry point for the same actions — the long-press
+                // menu alone gave no on-screen hint they existed.
+                .overlay(alignment: .trailing) {
+                    Menu {
+                        sceneActions(preset: preset, saved: saved, target: target)
                     } label: {
-                        Label("Edit Sounds", systemImage: "slider.horizontal.3")
+                        Image(systemName: "ellipsis")
+                            .font(.subheadline.weight(.bold))
+                            .foregroundStyle(HushPalette.textSecondary)
+                            .frame(width: 44, height: 44)
+                            .contentShape(Rectangle())
                     }
-                    Button {
-                        if let saved {
-                            renameTarget = .saved(savedID: saved.stableID, currentName: saved.name)
-                        } else {
-                            renameTarget = .builtIn(preset: preset, currentName: preset.name)
-                        }
-                    } label: {
-                        Label("Rename", systemImage: "pencil")
-                    }
-                    switch target.kind {
-                    case .hideBuiltIn:
-                        // Non-destructive (Settings can restore it) — no
-                        // confirmation, but the label must say what it does.
-                        Button {
-                            hideBuiltIn(preset)
-                            onDelete(preset)
-                        } label: {
-                            Label("Hide", systemImage: "eye.slash")
-                        }
-                    case .revertEditedBuiltIn:
-                        Button(role: .destructive) {
-                            deleteTarget = target
-                        } label: {
-                            Label("Revert to Original", systemImage: "arrow.uturn.backward")
-                        }
-                    case .deleteSaved:
-                        Button(role: .destructive) {
-                            deleteTarget = target
-                        } label: {
-                            Label("Delete", systemImage: "trash")
-                        }
-                    }
+                    .padding(.trailing, 4)
+                    .accessibilityLabel("More actions for \(preset.name)")
                 }
             }
         }
@@ -178,14 +147,83 @@ struct PresetSelector: View {
         }
         .sheet(item: $presetToEdit) { preset in
             EditPresetSheet(preset: preset) { preset, newSources in
-                saveEditedPreset(preset, sources: newSources)
-                // Reload with correct ID so highlighting works
-                var updated = preset
-                updated.sources = newSources
-                onSelect(updated)
+                ScenePersistence.saveEdited(
+                    preset,
+                    sources: newSources,
+                    renamedBuiltIns: renamedBuiltIns,
+                    context: modelContext
+                )
+                // Reload only the scene that's loaded (correct ID keeps the
+                // highlight). Editing any other scene must not stop the mix
+                // the user is listening to.
+                if selectedPreset?.id == preset.id {
+                    var updated = preset
+                    updated.sources = newSources
+                    onSelect(updated)
+                }
             }
             .presentationDetents([.large])
             .presentationDragIndicator(.visible)
+        }
+    }
+
+    // MARK: - Scene Actions
+
+    /// Edit / Rename / Hide-Revert-Delete. One builder feeds the visible "…"
+    /// menu and the long-press menu so they can't drift apart.
+    @ViewBuilder
+    private func sceneActions(preset: Preset, saved: SavedPreset?, target: DeleteTarget) -> some View {
+        Button {
+            presetToEdit = preset
+        } label: {
+            Label("Edit Sounds", systemImage: "slider.horizontal.3")
+        }
+        Button {
+            beginRename(preset: preset, saved: saved)
+        } label: {
+            Label("Rename", systemImage: "pencil")
+        }
+        switch target.kind {
+        case .hideBuiltIn:
+            // Non-destructive (Undo toast, and Settings can show it again) —
+            // no confirmation, but the label must say what it does.
+            Button {
+                performAction(target)
+            } label: {
+                Label(target.kind.actionTitle, systemImage: "eye.slash")
+            }
+        case .revertEditedBuiltIn:
+            Button(role: .destructive) {
+                performAction(target)
+            } label: {
+                Label(target.kind.actionTitle, systemImage: "arrow.uturn.backward")
+            }
+        case .deleteSaved:
+            Button(role: .destructive) {
+                performAction(target)
+            } label: {
+                Label(target.kind.actionTitle, systemImage: "trash")
+            }
+        }
+    }
+
+    private func beginRename(preset: Preset, saved: SavedPreset?) {
+        if let saved {
+            renameTarget = .saved(savedID: saved.stableID, currentName: saved.name)
+        } else {
+            renameTarget = .builtIn(preset: preset, currentName: preset.name)
+        }
+    }
+
+    /// Hide runs immediately (it's undoable); revert and delete confirm first.
+    private func performAction(_ target: DeleteTarget) {
+        switch target.kind {
+        case .hideBuiltIn:
+            hideBuiltIn(target.preset)
+            onHide(target.preset)
+            onDelete(target.preset)
+        case .revertEditedBuiltIn, .deleteSaved:
+            deleteTarget = target
         }
     }
 
@@ -194,44 +232,24 @@ struct PresetSelector: View {
         case .builtIn(let preset, _):
             renameBuiltIn(preset, to: name)
         case .saved(let savedID, _):
-            if let saved = savedByID[savedID] {
-                saved.name = name
-            }
+            guard let saved = savedPresets.first(where: { $0.stableID == savedID }) else { return }
+            saved.name = name
         }
+        onRename(target.id, name)
     }
 
     // MARK: - Persistence
 
-    private func saveEditedPreset(_ preset: Preset, sources: [SoundSource]) {
-        let targetID = preset.id
-        let descriptor = FetchDescriptor<SavedPreset>(
-            predicate: #Predicate { $0.stableID == targetID }
-        )
-        if let saved = try? modelContext.fetch(descriptor).first {
-            saved.sources = sources
-            return
-        }
-
-        // Built-in preset: convert to saved, keeping the same ID
-        if preset.isBuiltIn {
-            let name = renamedBuiltIns[preset.id] ?? preset.name
-            let saved = SavedPreset(name: name, icon: preset.icon, sources: sources)
-            saved.stableID = preset.id
-            modelContext.insert(saved)
-            // Don't call hideBuiltIn — orderedPresets already prefers the saved version
-        }
-    }
-
     private func hideBuiltIn(_ preset: Preset) {
         var hidden = hiddenBuiltInIDs
         hidden.insert(preset.id)
-        hiddenBuiltInData = (try? JSONEncoder().encode(hidden)) ?? Data()
+        hiddenBuiltInData = BuiltInSceneStore.encode(hidden)
     }
 
     private func renameBuiltIn(_ preset: Preset, to name: String) {
         var renamed = renamedBuiltIns
         renamed[preset.id] = name
-        renamedBuiltInData = (try? JSONEncoder().encode(renamed)) ?? Data()
+        renamedBuiltInData = BuiltInSceneStore.encode(renamed)
     }
 
     private func deleteSaved(_ saved: SavedPreset) {
@@ -260,7 +278,10 @@ struct PresetSelector: View {
 
     // MARK: - Row
 
-    private func presetRow(icon: String, name: String, detail: String, isSelected: Bool) -> some View {
+    /// `reservesMenuSpace` leaves room at the trailing edge for the "…" menu
+    /// the scene rows overlay on top of the row button.
+    private func presetRow(icon: String, name: String, detail: String, isSelected: Bool,
+                           reservesMenuSpace: Bool = false) -> some View {
         HStack(spacing: 14) {
             Image(systemName: icon)
                 .font(.body.weight(.semibold))
@@ -289,6 +310,7 @@ struct PresetSelector: View {
                 .contentTransition(reduceMotion ? .identity : .symbolEffect(.replace))
         }
         .padding(.horizontal, 16)
+        .padding(.trailing, reservesMenuSpace ? 40 : 0)
         .padding(.vertical, 13)
         .background {
             ZStack {
@@ -352,6 +374,17 @@ private struct DeleteTarget: Identifiable {
             return .revertEditedBuiltIn
         }
         return .deleteSaved
+    }
+}
+
+private extension DeleteTarget.Kind {
+    /// Shared by the menus and the VoiceOver custom action.
+    var actionTitle: String {
+        switch self {
+        case .hideBuiltIn: return "Hide"
+        case .revertEditedBuiltIn: return "Revert to Original"
+        case .deleteSaved: return "Delete"
+        }
     }
 }
 
@@ -452,5 +485,110 @@ private struct RenamePresetSheet: View {
     private func save() {
         guard !trimmedName.isEmpty else { return }
         onSave(trimmedName)
+    }
+}
+
+// MARK: - Scene list helpers
+
+/// The order scenes appear in: built-in slots first (an edited built-in's
+/// saved version takes its slot, hidden ones are skipped, renames applied),
+/// then user-created scenes. Generic over the saved type so it's testable
+/// without SwiftData.
+enum SceneOrdering {
+    static func ordered<Saved>(
+        builtIns: [Preset] = Preset.builtIn,
+        saved: [Saved],
+        stableID: (Saved) -> UUID,
+        toPreset: (Saved) -> Preset,
+        hidden: Set<UUID>,
+        renamed: [UUID: String]
+    ) -> [(preset: Preset, saved: Saved?)] {
+        let builtInIDs = Set(builtIns.map(\.id))
+        // `stableID` isn't `@Attribute(.unique)`, so duplicates are possible.
+        // Keep the first (newest, given the @Query sort) instead of trapping.
+        let savedByID = Dictionary(saved.map { (stableID($0), $0) }, uniquingKeysWith: { first, _ in first })
+        var result: [(preset: Preset, saved: Saved?)] = []
+
+        for builtIn in builtIns {
+            if let edited = savedByID[builtIn.id] {
+                result.append((toPreset(edited), edited))
+            } else if !hidden.contains(builtIn.id) {
+                var preset = builtIn
+                if let newName = renamed[builtIn.id] { preset.name = newName }
+                result.append((preset, nil))
+            }
+        }
+
+        var seen = Set<UUID>()
+        for entry in saved {
+            let id = stableID(entry)
+            guard !builtInIDs.contains(id), seen.insert(id).inserted else { continue }
+            result.append((toPreset(entry), entry))
+        }
+        return result
+    }
+}
+
+/// The edit-save path: Edit Sounds and the header's "Update scene" both write
+/// through here.
+enum ScenePersistence {
+    /// Returns false when there was nothing to write to (a saved scene that
+    /// has since been deleted).
+    @discardableResult
+    static func saveEdited(
+        _ preset: Preset,
+        sources: [SoundSource],
+        renamedBuiltIns: [UUID: String],
+        context: ModelContext
+    ) -> Bool {
+        let targetID = preset.id
+        let descriptor = FetchDescriptor<SavedPreset>(
+            predicate: #Predicate { $0.stableID == targetID }
+        )
+        if let saved = try? context.fetch(descriptor).first {
+            saved.sources = sources
+            return true
+        }
+
+        // Built-in preset: convert to saved, keeping the same ID
+        guard preset.isBuiltIn else { return false }
+        let name = renamedBuiltIns[preset.id] ?? preset.name
+        let saved = SavedPreset(name: name, icon: preset.icon, sources: sources)
+        saved.stableID = preset.id
+        context.insert(saved)
+        // Don't hide the built-in — SceneOrdering already prefers the saved version
+        return true
+    }
+}
+
+/// Hidden and renamed built-in scenes, stored as JSON blobs in UserDefaults
+/// under `PrefsKey`. Views read them through `@AppStorage`; this is the
+/// shared codec plus the writes that happen outside the scene list.
+enum BuiltInSceneStore {
+    static func decodeHidden(_ data: Data) -> Set<UUID> {
+        (try? JSONDecoder().decode(Set<UUID>.self, from: data)) ?? []
+    }
+
+    static func decodeRenamed(_ data: Data) -> [UUID: String] {
+        (try? JSONDecoder().decode([UUID: String].self, from: data)) ?? [:]
+    }
+
+    static func encode<Value: Encodable>(_ value: Value) -> Data {
+        (try? JSONEncoder().encode(value)) ?? Data()
+    }
+
+    static func hidden(in defaults: UserDefaults = .standard) -> Set<UUID> {
+        decodeHidden(defaults.data(forKey: PrefsKey.hiddenBuiltInPresets) ?? Data())
+    }
+
+    static func renamed(in defaults: UserDefaults = .standard) -> [UUID: String] {
+        decodeRenamed(defaults.data(forKey: PrefsKey.renamedBuiltInPresets) ?? Data())
+    }
+
+    /// Undo for Hide.
+    static func unhide(_ id: UUID, in defaults: UserDefaults = .standard) {
+        var ids = hidden(in: defaults)
+        guard ids.remove(id) != nil else { return }
+        defaults.set(encode(ids), forKey: PrefsKey.hiddenBuiltInPresets)
     }
 }

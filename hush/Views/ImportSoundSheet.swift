@@ -21,6 +21,7 @@ struct ImportSoundSheet: View {
     var onComplete: ((UserSoundAsset) -> Void)? = nil
 
     @Environment(\.dismiss) private var dismiss
+    @ScaledMetric(relativeTo: .headline) private var iconChipSize: CGFloat = 44
 
     @State private var displayName: String = ""
     @State private var category: SoundCategory = .things
@@ -28,20 +29,12 @@ struct ImportSoundSheet: View {
     @State private var crossfadeEnabled: Bool = true
     @State private var crossfadeDurationMs: Int = 100
 
-    @State private var isPreviewing = false
     @State private var previewError: String?
     @State private var importError: String?
     @State private var isWorking = false
 
-    @State private var previewPlayer: AVAudioPlayer?
-    /// Retained so the AVAudioPlayer delegate (which AVFoundation holds
-    /// weakly) stays alive long enough to fire `audioPlayerDidFinishPlaying`.
-    @State private var previewObserver: PreviewObserver?
-    /// Balances start/stopAccessingSecurityScopedResource for the preview.
-    /// Foundation refcounts scope access per URL — an unmatched stop (e.g.
-    /// onDisappear firing after the finish delegate already released) could
-    /// revoke the separate access commit() holds mid-import.
-    @State private var isHoldingPreviewScope = false
+    /// Preview player, its finish observer, and the security scope it holds.
+    @State private var preview = PreviewSession()
 
     private static let iconChoices: [String] = [
         "music.note", "waveform", "speaker.wave.2.fill", "headphones",
@@ -109,17 +102,17 @@ struct ImportSoundSheet: View {
 
             HStack(spacing: 14) {
                 Button(action: togglePreview) {
-                    Image(systemName: isPreviewing ? "stop.fill" : "play.fill")
+                    Image(systemName: preview.isPlaying ? "stop.fill" : "play.fill")
                         .font(.title3)
                         .foregroundStyle(HushPalette.textPrimary)
                         .frame(width: 48, height: 48)
                         .background(Circle().fill(HushPalette.raisedFill))
                 }
                 .buttonStyle(HushPressButtonStyle())
-                .accessibilityLabel(isPreviewing ? "Stop preview" : "Play preview")
+                .accessibilityLabel(preview.isPlaying ? "Stop preview" : "Play preview")
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(isPreviewing ? "Playing" : "Tap to hear a snippet")
+                    Text(preview.isPlaying ? "Playing" : "Tap to hear a snippet")
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(HushPalette.textPrimary)
                     if let previewError {
@@ -178,8 +171,11 @@ struct ImportSoundSheet: View {
                             category = cat
                         } label: {
                             HStack(spacing: 6) {
-                                Image(systemName: cat.icon)
-                                    .font(.footnote)
+                                // The selected chip swaps its icon for a
+                                // checkmark so selection isn't color-only.
+                                Image(systemName: isSelected ? "checkmark" : cat.icon)
+                                    .font(.footnote.weight(isSelected ? .bold : .regular))
+                                    .accessibilityHidden(true)
                                 Text(cat.rawValue)
                                     .font(.footnote.weight(.semibold))
                             }
@@ -189,9 +185,14 @@ struct ImportSoundSheet: View {
                             .background(
                                 Capsule()
                                     .fill(isSelected ? HushPalette.chipActive : HushPalette.chipMuted)
+                                    .overlay(
+                                        Capsule()
+                                            .strokeBorder(isSelected ? HushPalette.accentSoft : Color.clear, lineWidth: 1)
+                                    )
                             )
                         }
                         .buttonStyle(HushPressButtonStyle())
+                        .accessibilityAddTraits(isSelected ? .isSelected : [])
                     }
                 }
             }
@@ -206,7 +207,9 @@ struct ImportSoundSheet: View {
                 .textCase(.uppercase)
                 .foregroundStyle(HushPalette.textSecondary)
 
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 6), spacing: 8) {
+            // Adaptive: a fixed 6-column grid of 44pt circles overflowed
+            // 375pt phones and accessibility text sizes.
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: iconChipSize), spacing: 8)], spacing: 8) {
                 iconChip(symbol: nil, isCategoryDefault: true)
                 ForEach(Self.iconChoices, id: \.self) { symbol in
                     iconChip(symbol: symbol, isCategoryDefault: false)
@@ -225,7 +228,7 @@ struct ImportSoundSheet: View {
             Image(systemName: renderedSymbol)
                 .font(.headline)
                 .foregroundStyle(isSelected ? HushPalette.textPrimary : HushPalette.textSecondary)
-                .frame(width: 44, height: 44)
+                .frame(width: iconChipSize, height: iconChipSize)
                 .background(
                     Circle()
                         .fill(isSelected ? HushPalette.chipActive : HushPalette.chipMuted)
@@ -244,7 +247,9 @@ struct ImportSoundSheet: View {
 
     @ViewBuilder private var crossfadeSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack {
+            // The text stack is the Toggle's label, so VoiceOver reads
+            // "Smooth loop" instead of an unnamed switch.
+            Toggle(isOn: $crossfadeEnabled) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Smooth loop")
                         .font(.subheadline.weight(.semibold))
@@ -253,11 +258,8 @@ struct ImportSoundSheet: View {
                         .font(.caption)
                         .foregroundStyle(HushPalette.textSecondary)
                 }
-                Spacer()
-                Toggle("", isOn: $crossfadeEnabled)
-                    .labelsHidden()
-                    .tint(HushPalette.accentSoft)
             }
+            .tint(HushPalette.accentSoft)
 
             if crossfadeEnabled {
                 HStack(spacing: 8) {
@@ -315,7 +317,7 @@ struct ImportSoundSheet: View {
     }
 
     private func togglePreview() {
-        if isPreviewing {
+        if preview.isPlaying {
             stopPreview()
         } else {
             startPreview()
@@ -332,7 +334,7 @@ struct ImportSoundSheet: View {
                 previewError = "Couldn't access this file."
                 return
             }
-            isHoldingPreviewScope = true
+            preview.holdScope(of: sourceURL)
             url = sourceURL
         case .edit(let asset):
             url = library.url(for: asset)
@@ -341,50 +343,15 @@ struct ImportSoundSheet: View {
         do {
             let player = try AVAudioPlayer(contentsOf: url)
             player.volume = 0.6
-            // Flip the UI back to the play state when the file finishes
-            // naturally — AVAudioPlayer doesn't loop and there's no other
-            // signal, so the play button would stay in "playing" forever.
-            // Extract just the URL (Sendable) to release the security scope;
-            // capturing the whole Mode enum would drag in UserSoundAsset.
-            let scopedURL: URL? = {
-                if case .newImport(let url) = mode { return url }
-                return nil
-            }()
-            let observer = PreviewObserver { [_isPreviewing, _previewPlayer, _isHoldingPreviewScope, scopedURL] in
-                _previewPlayer.wrappedValue?.stop()
-                _previewPlayer.wrappedValue = nil
-                _isPreviewing.wrappedValue = false
-                if _isHoldingPreviewScope.wrappedValue {
-                    _isHoldingPreviewScope.wrappedValue = false
-                    scopedURL?.stopAccessingSecurityScopedResource()
-                }
-            }
-            player.delegate = observer
-            previewObserver = observer
-            player.prepareToPlay()
-            player.play()
-            previewPlayer = player
-            isPreviewing = true
+            preview.play(player)
         } catch {
             previewError = "Couldn't play this file."
-            releasePreviewScopeIfHeld()
+            preview.releaseScope()
         }
     }
 
     private func stopPreview() {
-        previewPlayer?.stop()
-        previewPlayer = nil
-        previewObserver = nil
-        isPreviewing = false
-        releasePreviewScopeIfHeld()
-    }
-
-    private func releasePreviewScopeIfHeld() {
-        guard isHoldingPreviewScope else { return }
-        isHoldingPreviewScope = false
-        if case .newImport(let sourceURL) = mode {
-            sourceURL.stopAccessingSecurityScopedResource()
-        }
+        preview.stop()
     }
 
     private func commit() {
@@ -468,10 +435,67 @@ struct ImportSoundSheet: View {
     }
 }
 
+/// Preview playback state for the import sheet, owned by the sheet with
+/// `@State`. A reference type so the player's finish callback can reset it
+/// by capturing this object (weakly), never the view's property-wrapper
+/// storage — capturing `_isPreviewing`-style State boxes stopped compiling
+/// with the Xcode 27 toolchain.
+@Observable
+private final class PreviewSession {
+    /// Drives the play/stop button.
+    private(set) var isPlaying = false
+
+    @ObservationIgnored private var player: AVAudioPlayer?
+    /// Retained so the AVAudioPlayer delegate (which AVFoundation holds
+    /// weakly) stays alive long enough to fire `audioPlayerDidFinishPlaying`.
+    @ObservationIgnored private var observer: PreviewObserver?
+    /// The security-scoped URL this preview opened, if any. Balances
+    /// start/stopAccessingSecurityScopedResource: Foundation refcounts scope
+    /// access per URL, and an unmatched stop (e.g. onDisappear firing after
+    /// the finish callback already released) could revoke the separate
+    /// access commit() holds mid-import.
+    @ObservationIgnored private var heldScopeURL: URL?
+
+    /// Records scope access the caller just started, for `releaseScope()`.
+    func holdScope(of url: URL) {
+        heldScopeURL = url
+    }
+
+    func play(_ player: AVAudioPlayer) {
+        // Flip the UI back to the play state when the file finishes
+        // naturally — AVAudioPlayer doesn't loop and there's no other
+        // signal, so the play button would stay in "playing" forever.
+        let observer = PreviewObserver { [weak self] in
+            self?.stop()
+        }
+        player.delegate = observer
+        self.observer = observer
+        player.prepareToPlay()
+        player.play()
+        self.player = player
+        isPlaying = true
+    }
+
+    /// Stops playback and releases the security scope, at most once.
+    func stop() {
+        player?.stop()
+        player = nil
+        observer = nil
+        isPlaying = false
+        releaseScope()
+    }
+
+    func releaseScope() {
+        guard let url = heldScopeURL else { return }
+        heldScopeURL = nil
+        url.stopAccessingSecurityScopedResource()
+    }
+}
+
 /// Bridges `AVAudioPlayerDelegate.audioPlayerDidFinishPlaying` to a Swift
 /// closure so the import sheet can flip its UI back to the play state when
 /// a preview ends naturally. AVFoundation holds the delegate weakly, so
-/// the sheet must retain this object via `@State`.
+/// `PreviewSession` retains this object.
 private final class PreviewObserver: NSObject, AVAudioPlayerDelegate {
     private let onFinish: @MainActor () -> Void
 

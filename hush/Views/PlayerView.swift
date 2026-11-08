@@ -1,3 +1,4 @@
+import Accessibility
 import SwiftUI
 import SwiftData
 
@@ -6,6 +7,10 @@ struct PlayerView: View {
     @State private var showSavePreset = false
     @State private var presetName = ""
     @State private var presetIcon = "star.fill"
+    /// Bumped on every completed save so the success haptic fires once.
+    @State private var saveFeedbackCount = 0
+    /// The scene just hidden, while its Undo toast is up.
+    @State private var hiddenSceneUndo: HiddenSceneUndo?
 
     private static let iconChoices = [
         "star.fill", "heart.fill", "bolt.fill", "moon.fill", "leaf.fill",
@@ -15,9 +20,11 @@ struct PlayerView: View {
 
     @Environment(\.modelContext) private var modelContext
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityVoiceOverEnabled) private var voiceOverEnabled
     @Environment(\.horizontalSizeClass) private var sizeClass
 
     @ScaledMetric(relativeTo: .title) private var playButtonHeight: CGFloat = 62
+    @ScaledMetric(relativeTo: .subheadline) private var saveButtonSize: CGFloat = 44
 
     private var contentMaxWidth: CGFloat {
         sizeClass == .regular ? 600 : .infinity
@@ -35,7 +42,10 @@ struct PlayerView: View {
                             onSelect: { preset in viewModel.loadPreset(preset) },
                             onRandom: { viewModel.randomMix() },
                             onDelete: { preset in viewModel.handlePresetDeleted(preset) },
-                            selectedPreset: viewModel.currentPreset
+                            selectedPreset: viewModel.currentPreset,
+                            isPlaying: viewModel.isPlaying,
+                            onRename: { id, name in viewModel.handlePresetRenamed(id: id, newName: name) },
+                            onHide: { preset in showHiddenSceneUndo(for: preset) }
                         )
                         mixerSection
                     }
@@ -45,9 +55,14 @@ struct PlayerView: View {
                     .frame(maxWidth: .infinity)
                 }
                 .safeAreaInset(edge: .bottom, spacing: 0) {
-                    transportBar
-                        .frame(maxWidth: contentMaxWidth)
-                        .frame(maxWidth: .infinity)
+                    VStack(spacing: 0) {
+                        if let hiddenSceneUndo {
+                            hiddenSceneToast(hiddenSceneUndo)
+                        }
+                        transportBar
+                    }
+                    .frame(maxWidth: contentMaxWidth)
+                    .frame(maxWidth: .infinity)
                 }
                 .safeAreaInset(edge: .top, spacing: 0) {
                     warningBanner
@@ -62,7 +77,9 @@ struct PlayerView: View {
             .sensoryFeedback(.selection, trigger: viewModel.currentPreset?.id)
             .sensoryFeedback(.impact(weight: .light), trigger: viewModel.showMixer)
             .sensoryFeedback(.impact(weight: .light), trigger: viewModel.activeSources.count)
+            .sensoryFeedback(.success, trigger: saveFeedbackCount)
             .tint(HushPalette.accentSoft)
+            .onAppear(perform: startFirstSceneAfterOnboardingIfNeeded)
             .sheet(isPresented: $viewModel.showTimer) {
                 TimerView(viewModel: viewModel)
                     .presentationDetents([.medium, .large])
@@ -89,11 +106,14 @@ struct PlayerView: View {
                     icon: $presetIcon,
                     iconChoices: Self.iconChoices
                 ) {
-                    guard !presetName.isEmpty else { return }
-                    viewModel.saveCurrentAsPreset(name: presetName, icon: presetIcon, context: modelContext)
+                    // Trimmed like Rename: an all-spaces name isn't a name.
+                    let name = presetName.trimmingCharacters(in: .whitespaces)
+                    guard !name.isEmpty else { return }
+                    viewModel.saveCurrentAsPreset(name: name, icon: presetIcon, context: modelContext)
                     presetName = ""
                     presetIcon = "star.fill"
                     showSavePreset = false
+                    confirmSave("Saved \(name)")
                 }
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
@@ -121,7 +141,7 @@ struct PlayerView: View {
                     .background(Capsule().fill(HushPalette.accent))
                 }
                 .accessibilityLabel("Timer")
-                .accessibilityValue("\(viewModel.timerState.displayTime) remaining")
+                .accessibilityValue(TimerSpeech.remaining(viewModel.timerState.remainingSeconds))
             } else {
                 Button { viewModel.showTimer = true } label: {
                     Image(systemName: "timer")
@@ -164,8 +184,10 @@ struct PlayerView: View {
                     HStack(spacing: 8) {
                         ForEach(viewModel.activeSources.prefix(6)) { source in
                             HStack(spacing: 6) {
+                                // Decorative: the name next to it says it all.
                                 Image(systemName: source.displayIcon)
                                     .font(.caption2.weight(.bold))
+                                    .accessibilityHidden(true)
                                 Text(source.displayName)
                                     .font(.caption2.weight(.medium))
                             }
@@ -216,21 +238,36 @@ struct PlayerView: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(HushRowButtonStyle())
-                .accessibilityLabel(viewModel.showMixer ? "Hide mixer" : "Show mixer")
+                // Keep the visible "Customize" name (Voice Control matches on
+                // it); the state goes in the value.
+                .accessibilityValue(viewModel.showMixer ? "Expanded" : "Collapsed")
 
                 if !viewModel.activeSources.isEmpty {
-                    Button {
-                        presetName = defaultPresetName
-                        showSavePreset = true
-                    } label: {
-                        Image(systemName: "square.and.arrow.down")
-                            .font(.subheadline.weight(.medium))
-                            .foregroundStyle(HushPalette.textSecondary)
-                            .frame(width: 44, height: 44)
-                            .contentShape(Rectangle())
+                    if let scene = updatableScene {
+                        // A tweaked scene is loaded: offer to write the
+                        // tweaks back to it, or branch off a new one.
+                        Menu {
+                            Button {
+                                updateCurrentScene()
+                            } label: {
+                                Label("Update \u{201C}\(scene.name)\u{201D}", systemImage: "arrow.triangle.2.circlepath")
+                            }
+                            Button {
+                                presentSavePreset()
+                            } label: {
+                                Label("Save as New Scene…", systemImage: "plus.square.on.square")
+                            }
+                        } label: {
+                            saveButtonLabel
+                        }
+                        .accessibilityLabel("Save current mix")
+                    } else {
+                        Button(action: presentSavePreset) {
+                            saveButtonLabel
+                        }
+                        .buttonStyle(HushPressButtonStyle())
+                        .accessibilityLabel("Save current mix as preset")
                     }
-                    .buttonStyle(HushPressButtonStyle())
-                    .accessibilityLabel("Save current mix as preset")
                 }
 
                 Image(systemName: viewModel.showMixer ? "chevron.up" : "chevron.down")
@@ -315,10 +352,150 @@ struct PlayerView: View {
         }
     }
 
+    // MARK: - Hidden Scene Undo Toast
+
+    private func hiddenSceneToast(_ undo: HiddenSceneUndo) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: "eye.slash")
+                .font(.caption)
+                .foregroundStyle(HushPalette.textSecondary)
+                .accessibilityHidden(true)
+            Text("\u{201C}\(undo.preset.name)\u{201D} hidden")
+                .font(.footnote)
+                .foregroundStyle(HushPalette.textPrimary)
+            Spacer(minLength: 8)
+            Button {
+                undoHide(undo)
+            } label: {
+                Text("Undo")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(HushPalette.accentSoft)
+                    .frame(minWidth: 44, minHeight: 44)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(HushPressButtonStyle())
+            .accessibilityLabel("Undo hide \(undo.preset.name)")
+        }
+        .padding(.leading, 14)
+        .padding(.trailing, 8)
+        .padding(.vertical, 4)
+        // Opaque: it floats over scrolling rows, which bled through the
+        // default translucent panel fill.
+        .hushPanel(radius: HushRadius.sm, fill: HushPalette.surface)
+        .padding(.horizontal, 20)
+        .padding(.bottom, 4)
+        .transition(reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
+        // Transient: Settings → Show Hidden Scenes is the lasting way back.
+        // VoiceOver users get longer to reach the button.
+        .task(id: undo.id) {
+            try? await Task.sleep(for: .seconds(voiceOverEnabled ? 12 : 5))
+            guard !Task.isCancelled, hiddenSceneUndo?.id == undo.id else { return }
+            withAnimation(reduceMotion ? nil : HushMotion.standard) {
+                hiddenSceneUndo = nil
+            }
+        }
+    }
+
+    private func showHiddenSceneUndo(for preset: Preset) {
+        let undo = HiddenSceneUndo(
+            preset: preset,
+            wasLoaded: viewModel.currentPreset?.id == preset.id
+        )
+        withAnimation(reduceMotion ? nil : HushMotion.standard) {
+            hiddenSceneUndo = undo
+        }
+        AccessibilityNotification.Announcement("\(preset.name) hidden. Undo is available.").post()
+    }
+
+    private func undoHide(_ undo: HiddenSceneUndo) {
+        BuiltInSceneStore.unhide(undo.preset.id)
+        // Hiding the loaded scene dropped it to "Custom Mix"; put it back.
+        if undo.wasLoaded, viewModel.currentPreset == nil {
+            viewModel.currentPreset = undo.preset
+        }
+        withAnimation(reduceMotion ? nil : HushMotion.standard) {
+            hiddenSceneUndo = nil
+        }
+        AccessibilityNotification.Announcement("\(undo.preset.name) is back").post()
+    }
+
+    // MARK: - Saving
+
+    private var saveButtonLabel: some View {
+        Image(systemName: "square.and.arrow.down")
+            .font(.subheadline.weight(.medium))
+            .foregroundStyle(HushPalette.textSecondary)
+            .frame(width: saveButtonSize, height: saveButtonSize)
+            .contentShape(Rectangle())
+    }
+
+    /// The loaded scene, when the mix has drifted from it and can be written
+    /// back. Built-ins qualify too: the edit-save path stores the update as
+    /// the scene's saved version, same as Edit Sounds does.
+    private var updatableScene: Preset? {
+        guard let preset = viewModel.currentPreset, viewModel.isCurrentPresetModified else { return nil }
+        return preset
+    }
+
+    private func presentSavePreset() {
+        presetName = defaultPresetName
+        showSavePreset = true
+    }
+
+    private func updateCurrentScene() {
+        guard var preset = updatableScene else { return }
+        let sources = viewModel.activeSources
+        let updated = ScenePersistence.saveEdited(
+            preset,
+            sources: sources,
+            renamedBuiltIns: BuiltInSceneStore.renamed(),
+            context: modelContext
+        )
+        // The scene's record is gone (deleted since it was loaded): saving
+        // as new is the only way to keep this mix.
+        guard updated else {
+            presentSavePreset()
+            return
+        }
+        // The loaded scene now matches what's playing, so it's no longer
+        // "edited". Assigned directly: reloading would restart playback.
+        preset.sources = sources
+        viewModel.currentPreset = preset
+        confirmSave("Updated \(preset.name)")
+    }
+
+    private func confirmSave(_ announcement: String) {
+        saveFeedbackCount += 1
+        AccessibilityNotification.Announcement(announcement).post()
+    }
+
+    // MARK: - First Run
+
+    /// "Get Started" should land on a playing scene, not an empty mix with a
+    /// disabled transport. Onboarding can't reach the view model, so it
+    /// leaves a one-shot flag that the first PlayerView appearance consumes.
+    private func startFirstSceneAfterOnboardingIfNeeded() {
+        guard OnboardingHandoff.consumeStartFirstScene() else { return }
+        let saved = (try? modelContext.fetch(
+            FetchDescriptor<SavedPreset>(sortBy: [SortDescriptor(\.createdAt, order: .reverse)])
+        )) ?? []
+        let scenes = SceneOrdering.ordered(
+            saved: saved,
+            stableID: \.stableID,
+            toPreset: { $0.toPreset() },
+            hidden: BuiltInSceneStore.hidden(),
+            renamed: BuiltInSceneStore.renamed()
+        )
+        guard let first = scenes.first?.preset else { return }
+        viewModel.loadPreset(first)
+    }
+
     // MARK: - Helpers
 
     private var currentTitle: String {
-        if let preset = viewModel.currentPreset { return preset.name }
+        if let preset = viewModel.currentPreset {
+            return viewModel.isCurrentPresetModified ? "\(preset.name) (edited)" : preset.name
+        }
         if !viewModel.activeSources.isEmpty { return "Custom Mix" }
         return "Choose a Scene"
     }
@@ -340,6 +517,14 @@ struct PlayerView: View {
 
 }
 
+/// A scene the user just hid, kept while its Undo toast is on screen.
+private struct HiddenSceneUndo: Identifiable {
+    let id = UUID()
+    let preset: Preset
+    /// The hidden scene was the loaded one, so Undo restores the header too.
+    let wasLoaded: Bool
+}
+
 private struct SavePresetSheet: View {
     @Binding var name: String
     @Binding var icon: String
@@ -348,8 +533,17 @@ private struct SavePresetSheet: View {
 
     @Environment(\.dismiss) private var dismiss
     @FocusState private var nameFieldFocused: Bool
+    @ScaledMetric(relativeTo: .body) private var iconSize: CGFloat = 44
 
-    private let columns = Array(repeating: GridItem(.flexible(), spacing: 12), count: 6)
+    /// Adaptive, not a fixed 6 columns: six 44pt circles plus spacing
+    /// overflowed 375pt phones and every accessibility text size.
+    private var columns: [GridItem] {
+        [GridItem(.adaptive(minimum: iconSize), spacing: 12)]
+    }
+
+    private var trimmedName: String {
+        name.trimmingCharacters(in: .whitespaces)
+    }
 
     var body: some View {
         NavigationStack {
@@ -390,7 +584,7 @@ private struct SavePresetSheet: View {
                                         Image(systemName: choice)
                                             .font(.body.weight(.semibold))
                                             .foregroundStyle(selected ? HushPalette.onAccent : HushPalette.textPrimary)
-                                            .frame(width: 44, height: 44)
+                                            .frame(width: iconSize, height: iconSize)
                                             .background(
                                                 Circle()
                                                     .fill(selected ? HushPalette.accent : HushPalette.surfaceRaised)
@@ -422,8 +616,8 @@ private struct SavePresetSheet: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") { onSave() }
                         .fontWeight(.semibold)
-                        .foregroundStyle(name.isEmpty ? HushPalette.textMuted : HushPalette.accentSoft)
-                        .disabled(name.isEmpty)
+                        .foregroundStyle(trimmedName.isEmpty ? HushPalette.textMuted : HushPalette.accentSoft)
+                        .disabled(trimmedName.isEmpty)
                 }
             }
             // Defer focus past the sheet presentation animation. The keyboard

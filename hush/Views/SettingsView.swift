@@ -12,12 +12,32 @@ struct SettingsView: View {
     @AppStorage("binauralCarrier") private var binauralCarrier: Double = Double(AudioConstants.defaultBinauralCarrier)
     @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
     @AppStorage("appearance") private var appearanceRaw: String = Appearance.system.rawValue
+    @AppStorage(PrefsKey.hiddenBuiltInPresets) private var hiddenBuiltInData = Data()
+    @AppStorage(PrefsKey.renamedBuiltInPresets) private var renamedBuiltInData = Data()
 
     @State private var headphonesConnected = AudioEngine.headphonesConnected
     @State private var showCredits = false
     @State private var showResetConfirmation = false
     @State private var isResetting = false
-    @State private var builtInsRestored = false
+    @State private var hiddenScenesRestored = false
+    @State private var sceneNamesReset = false
+
+    private var hiddenSceneCount: Int {
+        BuiltInSceneStore.decodeHidden(hiddenBuiltInData).count
+    }
+
+    private var renamedSceneCount: Int {
+        BuiltInSceneStore.decodeRenamed(renamedBuiltInData).count
+    }
+
+    private var scenesFooter: String {
+        switch (hiddenScenesRestored, sceneNamesReset) {
+        case (true, true): return "Hidden scenes are back, and built-in scenes have their original names."
+        case (true, false): return "Hidden scenes are back. Your renames are kept."
+        case (false, true): return "Built-in scenes have their original names again."
+        case (false, false): return "Bring back built-in scenes you've hidden, or undo renames of built-in scenes."
+        }
+    }
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
@@ -70,29 +90,51 @@ struct SettingsView: View {
                         }
                     }
 
+                    // Two separate restores: bringing hidden scenes back must
+                    // not also wipe every rename (it used to).
                     Section {
                         Button {
-                            UserDefaults.standard.removeObject(forKey: PrefsKey.hiddenBuiltInPresets)
-                            UserDefaults.standard.removeObject(forKey: PrefsKey.renamedBuiltInPresets)
-                            withAnimation(HushMotion.quick) { builtInsRestored = true }
-                            AccessibilityNotification.Announcement("Built-in scenes restored").post()
+                            hiddenBuiltInData = Data()
+                            withAnimation(HushMotion.quick) { hiddenScenesRestored = true }
+                            AccessibilityNotification.Announcement("Hidden scenes are back").post()
                         } label: {
                             HStack {
-                                Text("Restore Built-In Presets")
+                                Text("Show Hidden Scenes")
                                 Spacer()
-                                if builtInsRestored {
+                                if hiddenScenesRestored {
                                     Image(systemName: "checkmark")
                                         .foregroundStyle(HushPalette.accentSoft)
+                                        .accessibilityHidden(true)
+                                } else if hiddenSceneCount > 0 {
+                                    Text("\(hiddenSceneCount)")
+                                        .foregroundStyle(HushPalette.textSecondary)
+                                        .monospacedDigit()
                                 }
                             }
                         }
-                        .foregroundStyle(HushPalette.accentSoft)
-                    } header: {
-                        Text("Presets")
-                    } footer: {
-                        if builtInsRestored {
-                            Text("Hidden and renamed built-in scenes are back to their originals.")
+                        .foregroundStyle(hiddenSceneCount > 0 ? HushPalette.accentSoft : HushPalette.textMuted)
+                        .disabled(hiddenSceneCount == 0)
+                        .accessibilityValue(hiddenSceneCount > 0 ? "\(hiddenSceneCount) hidden" : "")
+
+                        Button {
+                            resetSceneNames()
+                        } label: {
+                            HStack {
+                                Text("Reset Scene Names")
+                                Spacer()
+                                if sceneNamesReset {
+                                    Image(systemName: "checkmark")
+                                        .foregroundStyle(HushPalette.accentSoft)
+                                        .accessibilityHidden(true)
+                                }
+                            }
                         }
+                        .foregroundStyle(renamedSceneCount > 0 ? HushPalette.accentSoft : HushPalette.textMuted)
+                        .disabled(renamedSceneCount == 0)
+                    } header: {
+                        Text("Scenes")
+                    } footer: {
+                        Text(scenesFooter)
                     }
 
                     importedSoundsSection
@@ -176,7 +218,7 @@ struct SettingsView: View {
                         }
                         .disabled(isResetting)
                     } footer: {
-                        Text("Deletes all saved presets and preferences, then returns to onboarding.")
+                        Text("Deletes all saved presets, imported sounds, and preferences, then returns to onboarding.")
                     }
                 }
                 .scrollContentBackground(.hidden)
@@ -216,7 +258,7 @@ struct SettingsView: View {
     @ViewBuilder private var importedSoundsSection: some View {
         Section {
             NavigationLink {
-                UserSoundManagementView()
+                UserSoundManagementView(viewModel: viewModel)
             } label: {
                 HStack {
                     Text("Imported Sounds")
@@ -260,6 +302,22 @@ struct SettingsView: View {
             .hushPanel(radius: HushRadius.md)
         }
         .transition(.opacity)
+    }
+
+    private func resetSceneNames() {
+        let renamedIDs = BuiltInSceneStore.decodeRenamed(renamedBuiltInData).keys
+        renamedBuiltInData = Data()
+        // A reset is a rename: the loaded scene's header and Now Playing take
+        // the original name back. Skip built-ins whose edited saved version
+        // owns the slot — that version keeps its own name.
+        let shadowed = Set(((try? modelContext.fetch(FetchDescriptor<SavedPreset>())) ?? []).map(\.stableID))
+        for id in renamedIDs where !shadowed.contains(id) {
+            if let original = Preset.builtIn.first(where: { $0.id == id }) {
+                viewModel.handlePresetRenamed(id: id, newName: original.name)
+            }
+        }
+        withAnimation(HushMotion.quick) { sceneNamesReset = true }
+        AccessibilityNotification.Announcement("Scene names reset").post()
     }
 
     private func resetApp() {
