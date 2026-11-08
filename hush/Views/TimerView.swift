@@ -5,7 +5,10 @@ struct TimerView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.horizontalSizeClass) private var sizeClass
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var customMinutes = 25
+    @State private var customMinutes: Int
+    /// Show the picker even while a timer runs (opened by a long press on
+    /// the transport chip). Starting from it replaces the running timer.
+    @State private var choosingDuration: Bool
     @ScaledMetric(relativeTo: .largeTitle) private var countdownFontSize: CGFloat = 38
 
     private let columns = [
@@ -14,6 +17,14 @@ struct TimerView: View {
         GridItem(.flexible(), spacing: 12)
     ]
 
+    init(viewModel: PlayerViewModel, choosingDuration: Bool = false) {
+        self.viewModel = viewModel
+        _choosingDuration = State(initialValue: choosingDuration)
+        // Custom starts at the last length used, within the slider's range.
+        let lastMinutes = Int((viewModel.lastTimerDuration / 60).rounded())
+        _customMinutes = State(initialValue: min(180, max(1, lastMinutes)))
+    }
+
     var body: some View {
         NavigationStack {
             ZStack {
@@ -21,7 +32,7 @@ struct TimerView: View {
 
                 ScrollView(showsIndicators: false) {
                     VStack(spacing: 22) {
-                        if viewModel.timerState.isRunning {
+                        if viewModel.timerState.isRunning && !choosingDuration {
                             runningTimerView
                         } else {
                             durationPicker
@@ -115,7 +126,9 @@ struct TimerView: View {
                     .font(.title3.weight(.semibold))
                     .foregroundStyle(HushPalette.textPrimary)
 
-                Text("Fades the last 10 seconds.")
+                Text(viewModel.timerState.isRunning
+                     ? "Replaces the running timer. Fades the last 10 seconds."
+                     : "Fades the last 10 seconds.")
                     .font(.subheadline)
                     .foregroundStyle(HushPalette.textSecondary)
             }
@@ -129,7 +142,7 @@ struct TimerView: View {
                 LazyVGrid(columns: columns, spacing: 10) {
                     ForEach(TimerDuration.allCases) { duration in
                         Button {
-                            viewModel.startTimer(duration: duration.seconds)
+                            start(duration.seconds)
                         } label: {
                             Text(duration.label)
                                 .font(.subheadline.weight(.semibold))
@@ -177,7 +190,7 @@ struct TimerView: View {
                 .sensoryFeedback(.selection, trigger: customMinutes / 5)
 
                 Button {
-                    viewModel.startTimer(duration: TimeInterval(customMinutes) * 60)
+                    start(TimeInterval(customMinutes) * 60)
                 } label: {
                     Text("Start \(customMinutes)-minute timer")
                         .font(.headline.weight(.semibold))
@@ -198,6 +211,12 @@ struct TimerView: View {
                 }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// Start (or replace) the timer and show its countdown.
+    private func start(_ duration: TimeInterval) {
+        viewModel.startTimer(duration: duration)
+        choosingDuration = false
     }
 }
 

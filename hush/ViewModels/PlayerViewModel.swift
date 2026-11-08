@@ -86,6 +86,18 @@ enum PlayerAlert: Identifiable, Equatable {
     }
 }
 
+/// A layer the user just removed, kept while its Undo toast is up so the
+/// layer can go back where it was.
+struct RemovedLayer: Identifiable, Equatable {
+    /// Fresh per removal, so removing the same layer twice restarts the toast.
+    let id = UUID()
+    let source: SoundSource
+    /// Position in `activeSources` before removal.
+    let index: Int
+    /// Removing it emptied the mix, which stopped playback; Undo resumes.
+    let stoppedPlayback: Bool
+}
+
 @MainActor
 @Observable
 final class PlayerViewModel {
@@ -101,6 +113,12 @@ final class PlayerViewModel {
     /// fallback. Distinct from `errorMessage` so the alert can be titled
     /// correctly ("Storage Error" vs "Audio Error").
     var storageFailureMessage: String?
+    /// The last layer `removeSource` took out, until it's undone or the mix
+    /// is replaced. PlayerView shows its Undo toast while this is set.
+    private(set) var lastRemovedLayer: RemovedLayer?
+    /// The length the transport's timer chip starts with one tap: whatever
+    /// `startTimer(duration:)` last ran, 25 minutes until then. Persisted.
+    private(set) var lastTimerDuration: TimeInterval = TimerDuration.twentyFive.seconds
 
     /// Audio takes precedence when both fire in the same turn — audio errors
     /// are recoverable in-session; storage errors are launch-time facts the
@@ -123,6 +141,7 @@ final class PlayerViewModel {
         stopTimer()
         activeSources = []
         currentPreset = nil
+        lastRemovedLayer = nil
         activeWarning = nil
         pendingWarnings = []
         // Reset missing-import tracking too — after a reset those assets no
@@ -160,6 +179,7 @@ final class PlayerViewModel {
     @ObservationIgnored private static let timerEndDateKey = "timerEndDate"
     @ObservationIgnored private static let timerDurationKey = "timerDuration"
     @ObservationIgnored private static let timerPlayChimeKey = "timerPlayChimeOnEnd"
+    @ObservationIgnored private static let lastTimerDurationKey = "lastTimerDuration"
 
     init() {
         engine.onBinauralHeadphonesDisconnected = { [weak self] in
@@ -208,6 +228,10 @@ final class PlayerViewModel {
         }
 
         timerState.playChimeOnEnd = UserDefaults.standard.object(forKey: Self.timerPlayChimeKey) as? Bool ?? true
+        let rememberedDuration = UserDefaults.standard.double(forKey: Self.lastTimerDurationKey)
+        if rememberedDuration > 0 {
+            lastTimerDuration = rememberedDuration
+        }
         restorePersistedTimerIfNeeded()
     }
 
@@ -335,9 +359,11 @@ final class PlayerViewModel {
     /// The one path for swapping in a whole new mix (preset load, Surprise
     /// Me, session restore). Drops layers whose user import was deleted —
     /// from the preset too, so it doesn't read as edited — and prunes the
-    /// missing-sounds banner to what's still in the mix. Internal so tests
-    /// can drive it without starting the engine.
+    /// missing-sounds banner to what's still in the mix. A removed layer's
+    /// undo belongs to the old mix, so it goes too. Internal so tests can
+    /// drive it without starting the engine.
     func replaceActiveSources(with sources: [SoundSource], preset: Preset?, animated: Bool = true) {
+        lastRemovedLayer = nil
         let kept = droppingDeletedUserImports(sources)
         var resolvedPreset = preset
         if let preset {
@@ -495,6 +521,12 @@ final class PlayerViewModel {
     }
 
     func removeSource(_ source: SoundSource) {
+        // The live copy, not the caller's snapshot: Undo restores the level
+        // and parameters the layer had at removal.
+        let index = activeSources.firstIndex(where: { $0.id == source.id })
+        let removed = index.map { activeSources[$0] }
+        let wasPlaying = isPlaying
+
         engine.removeSource(id: source.id)
         withAnimation(HushMotion.standard) {
             activeSources.removeAll { $0.id == source.id }
@@ -511,6 +543,66 @@ final class PlayerViewModel {
         if activeSources.isEmpty {
             stop()
         }
+
+        if let index, let removed {
+            lastRemovedLayer = RemovedLayer(
+                source: removed,
+                index: index,
+                stoppedPlayback: wasPlaying && activeSources.isEmpty
+            )
+        }
+    }
+
+    /// What `reinsertRemovedLayer` did, so `undoRemoveLayer` knows whether
+    /// playback has to come back.
+    enum LayerReinsertion: Equatable {
+        /// No record, the mix is full, or the layer is already back.
+        case nothing
+        case reinserted
+        /// Reinserted, and removing it was what stopped playback.
+        case reinsertedResumingPlayback
+    }
+
+    /// Puts the last removed layer back at its old position, pushes it to a
+    /// playing engine, and resumes playback if removing it had stopped it.
+    /// Returns false when nothing went back (no record, or the mix filled up
+    /// since); the record is cleared either way.
+    @discardableResult
+    func undoRemoveLayer() -> Bool {
+        switch reinsertRemovedLayer() {
+        case .nothing:
+            return false
+        case .reinsertedResumingPlayback:
+            // play() syncs the whole mix, the restored layer included.
+            play()
+        case .reinserted:
+            if isPlaying { applyCurrentSources() }
+        }
+        return true
+    }
+
+    /// The state half of `undoRemoveLayer`: reinserts the layer (index
+    /// clamped to the current mix, cap respected) and clears the record,
+    /// without touching the engine. Internal so tests can drive it.
+    func reinsertRemovedLayer() -> LayerReinsertion {
+        guard let removed = lastRemovedLayer else { return .nothing }
+        lastRemovedLayer = nil
+        guard activeSources.count < AudioConstants.maxSimultaneousSources,
+              !activeSources.contains(where: { $0.id == removed.source.id }) else { return .nothing }
+
+        let index = min(max(removed.index, 0), activeSources.count)
+        withAnimation(HushMotion.standard) {
+            activeSources.insert(removed.source, at: index)
+        }
+        // A re-entry path like addSource: beat layers bring their warnings.
+        warnIfNeeded(for: [removed.source])
+        return removed.stoppedPlayback && !isPlaying ? .reinsertedResumingPlayback : .reinserted
+    }
+
+    /// Drop the undo record without restoring: its toast timed out or a
+    /// newer toast replaced it.
+    func discardRemovedLayer() {
+        lastRemovedLayer = nil
     }
 
     /// Re-attach an existing source after its backing file changed, keeping
@@ -545,6 +637,10 @@ final class PlayerViewModel {
     /// edited), prune the missing banner, and persist the session.
     func handleUserAssetDeleted(assetID: String) {
         engine.invalidateCachedBuffer(assetID: assetID)
+        // An undo would bring back a layer that can never play.
+        if lastRemovedLayer?.source.assetID == assetID {
+            lastRemovedLayer = nil
+        }
         let doomed = activeSources.filter { $0.assetID == assetID }
         for source in doomed {
             engine.removeSource(id: source.id)
@@ -704,6 +800,10 @@ final class PlayerViewModel {
 
     func startTimer(duration: TimeInterval) {
         timerState.start(duration: duration)
+        if duration > 0 {
+            lastTimerDuration = duration
+            UserDefaults.standard.set(duration, forKey: Self.lastTimerDurationKey)
+        }
         if !isPlaying && !activeSources.isEmpty {
             play()
         }

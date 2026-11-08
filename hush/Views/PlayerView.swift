@@ -11,6 +11,9 @@ struct PlayerView: View {
     @State private var saveFeedbackCount = 0
     /// The scene just hidden, while its Undo toast is up.
     @State private var hiddenSceneUndo: HiddenSceneUndo?
+    /// The timer sheet opens on the duration picker (chip long press) rather
+    /// than the countdown.
+    @State private var timerSheetChoosesDuration = false
 
     private static let iconChoices = [
         "star.fill", "heart.fill", "bolt.fill", "moon.fill", "leaf.fill",
@@ -20,10 +23,12 @@ struct PlayerView: View {
 
     @Environment(\.modelContext) private var modelContext
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.accessibilityVoiceOverEnabled) private var voiceOverEnabled
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.horizontalSizeClass) private var sizeClass
 
     @ScaledMetric(relativeTo: .title) private var playButtonHeight: CGFloat = 62
+    /// Touch-target floor for the stacked chip; its capped text sets the rest.
+    private let stackedTimerChipHeight: CGFloat = 44
     @ScaledMetric(relativeTo: .subheadline) private var saveButtonSize: CGFloat = 44
 
     private var contentMaxWidth: CGFloat {
@@ -38,6 +43,7 @@ struct PlayerView: View {
                 ScrollView(showsIndicators: false) {
                     VStack(spacing: 16) {
                         nowPlayingHeader
+                        mixerSection
                         PresetSelector(
                             onSelect: { preset in viewModel.loadPreset(preset) },
                             onRandom: { viewModel.randomMix() },
@@ -47,7 +53,6 @@ struct PlayerView: View {
                             onRename: { id, name in viewModel.handlePresetRenamed(id: id, newName: name) },
                             onHide: { preset in showHiddenSceneUndo(for: preset) }
                         )
-                        mixerSection
                     }
                     .padding(.horizontal, 20)
                     .padding(.top, 8)
@@ -56,11 +61,10 @@ struct PlayerView: View {
                 }
                 .safeAreaInset(edge: .bottom, spacing: 0) {
                     VStack(spacing: 0) {
-                        if let hiddenSceneUndo {
-                            hiddenSceneToast(hiddenSceneUndo)
-                        }
+                        undoToast
                         transportBar
                     }
+                    .animation(reduceMotion ? nil : HushMotion.standard, value: undoToastID)
                     .frame(maxWidth: contentMaxWidth)
                     .frame(maxWidth: .infinity)
                 }
@@ -80,8 +84,13 @@ struct PlayerView: View {
             .sensoryFeedback(.success, trigger: saveFeedbackCount)
             .tint(HushPalette.accentSoft)
             .onAppear(perform: startFirstSceneAfterOnboardingIfNeeded)
+            // One toast at a time, newest wins: a fresh layer removal
+            // replaces a pending hidden-scene undo.
+            .onChange(of: viewModel.lastRemovedLayer?.id) { _, id in
+                if id != nil { hiddenSceneUndo = nil }
+            }
             .sheet(isPresented: $viewModel.showTimer) {
-                TimerView(viewModel: viewModel)
+                TimerView(viewModel: viewModel, choosingDuration: timerSheetChoosesDuration)
                     .presentationDetents([.medium, .large])
                     .presentationDragIndicator(.visible)
             }
@@ -123,33 +132,10 @@ struct PlayerView: View {
 
     // MARK: - Toolbar
 
+    // The timer lives in the transport bar (TimerChip); only Settings here.
     @ToolbarContentBuilder
     private var toolbarItems: some ToolbarContent {
-        ToolbarItemGroup(placement: .topBarTrailing) {
-            if viewModel.timerState.isRunning {
-                Button { viewModel.showTimer = true } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "timer")
-                            .font(.caption.weight(.bold))
-                        Text(viewModel.timerState.displayTime)
-                            .font(.caption.weight(.semibold))
-                            .monospacedDigit()
-                    }
-                    .foregroundStyle(HushPalette.onAccent)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(Capsule().fill(HushPalette.accent))
-                }
-                .accessibilityLabel("Timer")
-                .accessibilityValue(TimerSpeech.remaining(viewModel.timerState.remainingSeconds))
-            } else {
-                Button { viewModel.showTimer = true } label: {
-                    Image(systemName: "timer")
-                        .foregroundStyle(HushPalette.textSecondary)
-                }
-                .accessibilityLabel("Timer")
-            }
-
+        ToolbarItem(placement: .topBarTrailing) {
             Button { viewModel.showSettings = true } label: {
                 Image(systemName: "gearshape")
                     .foregroundStyle(HushPalette.textSecondary)
@@ -161,48 +147,33 @@ struct PlayerView: View {
     // MARK: - Now Playing (concise state, not marketing copy)
 
     private var nowPlayingHeader: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 12) {
             VStack(alignment: .leading, spacing: 4) {
                 Text(currentTitle)
                     .font(.system(.title, design: .serif, weight: .semibold))
                     .foregroundStyle(HushPalette.textPrimary)
 
-                if !viewModel.activeSources.isEmpty {
-                    Text(sourcesSummary)
-                        .font(.subheadline)
-                        .foregroundStyle(HushPalette.textSecondary)
-                        .transition(.opacity)
-                }
-            }
-
-            // Source chips — only when mix is loaded. The chips already carry
-            // the "what's playing" signal, so we don't duplicate with a
-            // separate Playing pill; the transport button's pause-state is the
-            // canonical "are we playing" indicator.
-            if !viewModel.activeSources.isEmpty {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        ForEach(viewModel.activeSources.prefix(6)) { source in
-                            HStack(spacing: 6) {
-                                // Decorative: the name next to it says it all.
-                                Image(systemName: source.displayIcon)
-                                    .font(.caption2.weight(.bold))
-                                    .accessibilityHidden(true)
-                                Text(source.displayName)
-                                    .font(.caption2.weight(.medium))
-                            }
-                            .foregroundStyle(HushPalette.textPrimary)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 7)
-                            .background(
-                                Capsule()
-                                    .fill(HushPalette.raisedFill)
-                                    .overlay(Capsule().strokeBorder(HushPalette.outline, lineWidth: 1))
-                            )
-                        }
+                Group {
+                    if viewModel.activeSources.isEmpty {
+                        Text("Pick a scene below, or build your own mix in Customize.")
+                    } else {
+                        Text(sourcesSummary)
                     }
                 }
+                .font(.subheadline)
+                .foregroundStyle(HushPalette.textSecondary)
                 .transition(.opacity)
+            }
+
+            // The mix up front: a level and a remove per layer. The
+            // transport button's pause-state stays the canonical "are we
+            // playing" indicator, so no separate Playing pill here.
+            if !viewModel.activeSources.isEmpty {
+                LayerLevelStrip(viewModel: viewModel)
+                    // Let the remove buttons' hit areas run into the panel
+                    // padding, so the xmarks sit on the content edge.
+                    .padding(.trailing, -12)
+                    .transition(.opacity)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -319,92 +290,121 @@ struct PlayerView: View {
                 .frame(height: 24)
                 .allowsHitTesting(false)
 
-            HStack(spacing: 14) {
-                Button {
-                    viewModel.togglePlayback()
-                } label: {
-                    HStack(spacing: 10) {
-                        Image(systemName: viewModel.isPlaying ? "pause.fill" : "play.fill")
-                            .font(.body.weight(.bold))
-                            .contentTransition(reduceMotion ? .identity : .symbolEffect(.replace))
-
-                        Text(viewModel.isPlaying ? "Pause" : "Play")
-                            .font(.body.weight(.semibold))
-                    }
-                    .foregroundStyle(viewModel.activeSources.isEmpty ? HushPalette.textSecondary : HushPalette.onAccent)
-                    .frame(maxWidth: .infinity)
-                    .frame(minHeight: playButtonHeight)
-                    .background(
-                        Capsule()
-                            .fill(viewModel.activeSources.isEmpty ? HushPalette.surfaceRaised : HushPalette.accent)
-                    )
-                }
-                .buttonStyle(HushPrimaryButtonStyle())
-                .disabled(viewModel.activeSources.isEmpty)
-                .accessibilityLabel(viewModel.isPlaying ? "Pause" : "Play")
-                .accessibilityHint(viewModel.activeSources.isEmpty
-                                   ? "Add a sound or choose a scene first"
-                                   : "")
-            }
-            .padding(.horizontal, 20)
-            .padding(.bottom, 12)
-            .background(HushPalette.background.opacity(0.95))
+            transportControls
+                .padding(.horizontal, 20)
+                .padding(.bottom, 12)
+                .background(HushPalette.background.opacity(0.95))
         }
     }
 
-    // MARK: - Hidden Scene Undo Toast
-
-    private func hiddenSceneToast(_ undo: HiddenSceneUndo) -> some View {
-        HStack(spacing: 10) {
-            Image(systemName: "eye.slash")
-                .font(.caption)
-                .foregroundStyle(HushPalette.textSecondary)
-                .accessibilityHidden(true)
-            Text("\u{201C}\(undo.preset.name)\u{201D} hidden")
-                .font(.footnote)
-                .foregroundStyle(HushPalette.textPrimary)
-            Spacer(minLength: 8)
-            Button {
-                undoHide(undo)
-            } label: {
-                Text("Undo")
-                    .font(.footnote.weight(.semibold))
-                    .foregroundStyle(HushPalette.accentSoft)
-                    .frame(minWidth: 44, minHeight: 44)
-                    .contentShape(Rectangle())
+    /// Play/Pause with the timer chip beside it. At accessibility text
+    /// sizes the chip drops below, so it never squeezes Play, which stays
+    /// the dominant control.
+    @ViewBuilder
+    private var transportControls: some View {
+        if dynamicTypeSize.isAccessibilitySize {
+            VStack(spacing: 8) {
+                playButton
+                // Still large, but capped so the secondary control doesn't
+                // double the height of a bar that never scrolls away.
+                timerChip(minHeight: stackedTimerChipHeight)
+                    .dynamicTypeSize(...DynamicTypeSize.accessibility2)
             }
-            .buttonStyle(HushPressButtonStyle())
-            .accessibilityLabel("Undo hide \(undo.preset.name)")
+        } else {
+            HStack(spacing: 12) {
+                playButton
+                timerChip(minHeight: playButtonHeight)
+                    .fixedSize(horizontal: true, vertical: false)
+            }
         }
-        .padding(.leading, 14)
-        .padding(.trailing, 8)
-        .padding(.vertical, 4)
-        // Opaque: it floats over scrolling rows, which bled through the
-        // default translucent panel fill.
-        .hushPanel(radius: HushRadius.sm, fill: HushPalette.surface)
-        .padding(.horizontal, 20)
-        .padding(.bottom, 4)
-        .transition(reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
-        // Transient: Settings → Show Hidden Scenes is the lasting way back.
-        // VoiceOver users get longer to reach the button.
-        .task(id: undo.id) {
-            try? await Task.sleep(for: .seconds(voiceOverEnabled ? 12 : 5))
-            guard !Task.isCancelled, hiddenSceneUndo?.id == undo.id else { return }
-            withAnimation(reduceMotion ? nil : HushMotion.standard) {
-                hiddenSceneUndo = nil
+    }
+
+    private var playButton: some View {
+        Button {
+            viewModel.togglePlayback()
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: viewModel.isPlaying ? "pause.fill" : "play.fill")
+                    .font(.body.weight(.bold))
+                    .contentTransition(reduceMotion ? .identity : .symbolEffect(.replace))
+
+                Text(viewModel.isPlaying ? "Pause" : "Play")
+                    .font(.body.weight(.semibold))
             }
+            .foregroundStyle(viewModel.activeSources.isEmpty ? HushPalette.textSecondary : HushPalette.onAccent)
+            .frame(maxWidth: .infinity)
+            .frame(minHeight: playButtonHeight)
+            .background(
+                Capsule()
+                    .fill(viewModel.activeSources.isEmpty ? HushPalette.surfaceRaised : HushPalette.accent)
+            )
+        }
+        .buttonStyle(HushPrimaryButtonStyle())
+        .disabled(viewModel.activeSources.isEmpty)
+        .accessibilityLabel(viewModel.isPlaying ? "Pause" : "Play")
+        .accessibilityHint(viewModel.activeSources.isEmpty
+                           ? "Add a sound or choose a scene first"
+                           : "")
+    }
+
+    private func timerChip(minHeight: CGFloat) -> some View {
+        TimerChip(viewModel: viewModel, minHeight: minHeight) { choosingDuration in
+            timerSheetChoosesDuration = choosingDuration
+            viewModel.showTimer = true
+        }
+    }
+
+    // MARK: - Undo Toast
+
+    /// Identity of whichever toast is up, for the show/hide animation.
+    private var undoToastID: UUID? {
+        viewModel.lastRemovedLayer?.id ?? hiddenSceneUndo?.id
+    }
+
+    /// At most one toast. Each undoable action clears the other's record
+    /// (newest wins), so the order here only matters within a frame.
+    @ViewBuilder
+    private var undoToast: some View {
+        if let removed = viewModel.lastRemovedLayer {
+            let name = removed.source.displayName
+            UndoToast(
+                id: removed.id,
+                icon: removed.source.displayIcon,
+                message: "Removed \(name)",
+                announcement: "\(name) removed. Undo is available.",
+                undoAccessibilityLabel: "Undo remove \(name)",
+                onUndo: { undoRemoveLayer(removed) },
+                onExpire: {
+                    // Transient: the sound picker is the lasting way back.
+                    guard viewModel.lastRemovedLayer?.id == removed.id else { return }
+                    viewModel.discardRemovedLayer()
+                }
+            )
+        } else if let hidden = hiddenSceneUndo {
+            UndoToast(
+                id: hidden.id,
+                icon: "eye.slash",
+                message: "\u{201C}\(hidden.preset.name)\u{201D} hidden",
+                announcement: "\(hidden.preset.name) hidden. Undo is available.",
+                undoAccessibilityLabel: "Undo hide \(hidden.preset.name)",
+                onUndo: { undoHide(hidden) },
+                onExpire: {
+                    // Transient: Settings → Show Hidden Scenes is the
+                    // lasting way back.
+                    guard hiddenSceneUndo?.id == hidden.id else { return }
+                    hiddenSceneUndo = nil
+                }
+            )
         }
     }
 
     private func showHiddenSceneUndo(for preset: Preset) {
-        let undo = HiddenSceneUndo(
+        // Newest wins: a pending layer undo leaves with its toast.
+        viewModel.discardRemovedLayer()
+        hiddenSceneUndo = HiddenSceneUndo(
             preset: preset,
             wasLoaded: viewModel.currentPreset?.id == preset.id
         )
-        withAnimation(reduceMotion ? nil : HushMotion.standard) {
-            hiddenSceneUndo = undo
-        }
-        AccessibilityNotification.Announcement("\(preset.name) hidden. Undo is available.").post()
     }
 
     private func undoHide(_ undo: HiddenSceneUndo) {
@@ -413,10 +413,18 @@ struct PlayerView: View {
         if undo.wasLoaded, viewModel.currentPreset == nil {
             viewModel.currentPreset = undo.preset
         }
-        withAnimation(reduceMotion ? nil : HushMotion.standard) {
-            hiddenSceneUndo = nil
-        }
+        hiddenSceneUndo = nil
         AccessibilityNotification.Announcement("\(undo.preset.name) is back").post()
+    }
+
+    private func undoRemoveLayer(_ removed: RemovedLayer) {
+        let name = removed.source.displayName
+        if viewModel.undoRemoveLayer() {
+            AccessibilityNotification.Announcement("\(name) is back").post()
+        } else {
+            // The mix filled up since the removal; the toast is gone either way.
+            AccessibilityNotification.Announcement("The mix is full, so \(name) couldn't come back").post()
+        }
     }
 
     // MARK: - Saving
