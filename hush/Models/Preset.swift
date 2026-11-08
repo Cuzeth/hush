@@ -155,10 +155,11 @@ struct Preset: Identifiable, Codable {
 // MARK: - Resolved Scene List
 
 extension Preset {
-    /// The scene list as the user sees it, in display order: built-in slots
-    /// first (an edited built-in's SavedPreset replaces it in place, even if
-    /// the stock version is hidden; an unedited one is skipped when hidden
-    /// and otherwise takes its rename), then user-created presets.
+    /// The scene list as the user sees it, in display order. By default:
+    /// built-in slots first (an edited built-in's SavedPreset replaces it in
+    /// place, even if the stock version is hidden; an unedited one is
+    /// skipped when hidden and otherwise takes its rename), then user-created
+    /// presets. The user's custom order, when there is one, goes first.
     ///
     /// Same ordering as the scene list (`SceneOrdering`), so remote next/previous walks
     /// the same list the selector shows. `saved` must already be in display
@@ -168,17 +169,21 @@ extension Preset {
     /// - Parameters:
     ///   - hiddenIDs: decoded from `PrefsKey.hiddenBuiltInPresets`.
     ///   - renames: decoded from `PrefsKey.renamedBuiltInPresets`.
+    ///   - order: the custom order; defaults to the stored one
+    ///     (`PrefsKey.sceneOrder`), so callers follow the user's drag order.
     static func resolvedSceneList(
         saved: [SavedPreset],
         hiddenIDs: Set<UUID>,
-        renames: [UUID: String]
+        renames: [UUID: String],
+        order: [UUID] = SceneOrderStore.order()
     ) -> [Preset] {
         SceneOrdering.ordered(
             saved: saved,
             stableID: \.stableID,
             toPreset: { $0.toPreset() },
             hidden: hiddenIDs,
-            renamed: renames
+            renamed: renames,
+            order: order
         ).map(\.preset)
     }
 

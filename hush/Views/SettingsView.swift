@@ -14,6 +14,7 @@ struct SettingsView: View {
     @AppStorage("appearance") private var appearanceRaw: String = Appearance.system.rawValue
     @AppStorage(PrefsKey.hiddenBuiltInPresets) private var hiddenBuiltInData = Data()
     @AppStorage(PrefsKey.renamedBuiltInPresets) private var renamedBuiltInData = Data()
+    @AppStorage(PrefsKey.sceneOrder) private var sceneOrderData = Data()
 
     @State private var headphonesConnected = AudioEngine.headphonesConnected
     @State private var showCredits = false
@@ -21,6 +22,7 @@ struct SettingsView: View {
     @State private var isResetting = false
     @State private var hiddenScenesRestored = false
     @State private var sceneNamesReset = false
+    @State private var sceneOrderReset = false
 
     private var hiddenSceneCount: Int {
         BuiltInSceneStore.decodeHidden(hiddenBuiltInData).count
@@ -30,13 +32,22 @@ struct SettingsView: View {
         BuiltInSceneStore.decodeRenamed(renamedBuiltInData).count
     }
 
+    private var hasCustomSceneOrder: Bool {
+        SceneOrderStore.hasCustomOrder(sceneOrderData)
+    }
+
     private var scenesFooter: String {
+        var notes: [String] = []
         switch (hiddenScenesRestored, sceneNamesReset) {
-        case (true, true): return "Hidden scenes are back, and built-in scenes have their original names."
-        case (true, false): return "Hidden scenes are back. Your renames are kept."
-        case (false, true): return "Built-in scenes have their original names again."
-        case (false, false): return "Bring back built-in scenes you've hidden, or undo renames of built-in scenes."
+        case (true, true): notes.append("Hidden scenes are back, and built-in scenes have their original names.")
+        case (true, false): notes.append("Hidden scenes are back. Your renames are kept.")
+        case (false, true): notes.append("Built-in scenes have their original names again.")
+        case (false, false): break
         }
+        if sceneOrderReset { notes.append("Scenes are back in their original order.") }
+        return notes.isEmpty
+            ? "Bring back built-in scenes you've hidden, undo renames of built-in scenes, or undo your scene order."
+            : notes.joined(separator: " ")
     }
 
     @Environment(\.dismiss) private var dismiss
@@ -131,6 +142,22 @@ struct SettingsView: View {
                         }
                         .foregroundStyle(renamedSceneCount > 0 ? HushPalette.accentSoft : HushPalette.textMuted)
                         .disabled(renamedSceneCount == 0)
+
+                        Button {
+                            resetSceneOrder()
+                        } label: {
+                            HStack {
+                                Text("Reset Scene Order")
+                                Spacer()
+                                if sceneOrderReset {
+                                    Image(systemName: "checkmark")
+                                        .foregroundStyle(HushPalette.accentSoft)
+                                        .accessibilityHidden(true)
+                                }
+                            }
+                        }
+                        .foregroundStyle(hasCustomSceneOrder ? HushPalette.accentSoft : HushPalette.textMuted)
+                        .disabled(!hasCustomSceneOrder)
                     } header: {
                         Text("Scenes")
                     } footer: {
@@ -318,6 +345,14 @@ struct SettingsView: View {
         }
         withAnimation(HushMotion.quick) { sceneNamesReset = true }
         AccessibilityNotification.Announcement("Scene names reset").post()
+    }
+
+    /// Back to built-ins first, then your scenes newest first. Remote
+    /// next/previous follows, since it reads the same stored order.
+    private func resetSceneOrder() {
+        SceneOrderStore.reset()
+        withAnimation(HushMotion.quick) { sceneOrderReset = true }
+        AccessibilityNotification.Announcement("Scene order reset").post()
     }
 
     private func resetApp() {
