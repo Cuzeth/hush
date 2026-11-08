@@ -153,16 +153,14 @@ struct PlayerView: View {
                     .font(.system(.title, design: .serif, weight: .semibold))
                     .foregroundStyle(HushPalette.textPrimary)
 
-                Group {
-                    if viewModel.activeSources.isEmpty {
-                        Text("Pick a scene below, or build your own mix in Customize.")
-                    } else {
-                        Text(sourcesSummary)
-                    }
+                // The level strip below names every layer, so a summary
+                // line would only repeat it — show guidance when empty only.
+                if viewModel.activeSources.isEmpty {
+                    Text("Pick a scene below, or build your own mix in Customize.")
+                        .font(.subheadline)
+                        .foregroundStyle(HushPalette.textSecondary)
+                        .transition(.opacity)
                 }
-                .font(.subheadline)
-                .foregroundStyle(HushPalette.textSecondary)
-                .transition(.opacity)
             }
 
             // The mix up front: a level and a remove per layer. The
@@ -504,10 +502,6 @@ struct PlayerView: View {
         }
         if !viewModel.activeSources.isEmpty { return "Custom Mix" }
         return "Choose a Scene"
-    }
-
-    private var sourcesSummary: String {
-        soundSourceSummary(viewModel.activeSources)
     }
 
     /// Suggested preset name based on the active mix — keeps the save sheet
