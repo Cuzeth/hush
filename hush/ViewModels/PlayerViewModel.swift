@@ -104,6 +104,10 @@ final class PlayerViewModel {
     var isPlaying = false
     var currentPreset: Preset?
     var activeSources: [SoundSource] = []
+    /// Bumped each time the whole mix is swapped (scene load, Random Mix,
+    /// session restore). Layer lists key on it so a swap replaces the rows
+    /// in one cut instead of fading old and new rows over each other.
+    private(set) var mixGeneration = 0
     var showMixer = false
     var showTimer = false
     var showSettings = false
@@ -370,13 +374,15 @@ final class PlayerViewModel {
             resolvedPreset?.sources = droppingDeletedUserImports(preset.sources)
         }
         if animated {
-            withAnimation(HushMotion.slow) {
+            withAnimation(HushMotion.sceneSwap) {
                 currentPreset = resolvedPreset
                 activeSources = kept
+                mixGeneration &+= 1
             }
         } else {
             currentPreset = resolvedPreset
             activeSources = kept
+            mixGeneration &+= 1
         }
         pruneMissingAssetsToActiveSources()
     }

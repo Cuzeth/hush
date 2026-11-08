@@ -244,7 +244,10 @@ struct PlayerView: View {
                     // Let the remove buttons' hit areas run into the panel
                     // padding, so the xmarks sit on the content edge.
                     .padding(.trailing, -12)
-                    .transition(.opacity)
+                    // A new mix is a new strip: the old rows leave at once
+                    // and the new ones fade in, never both on screen.
+                    .id(viewModel.mixGeneration)
+                    .transition(.asymmetric(insertion: .opacity, removal: .identity))
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)

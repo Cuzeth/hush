@@ -47,9 +47,15 @@ struct MixerView: View {
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 24)
             } else {
-                ForEach(viewModel.activeSources) { source in
-                    SourceRow(source: source, viewModel: viewModel)
+                // Keyed on the mix, so a scene swap replaces the rows in one
+                // cut instead of fading the old set over the new.
+                VStack(spacing: 14) {
+                    ForEach(viewModel.activeSources) { source in
+                        SourceRow(source: source, viewModel: viewModel)
+                    }
                 }
+                .id(viewModel.mixGeneration)
+                .transition(.asymmetric(insertion: .opacity, removal: .identity))
             }
 
             if viewModel.activeSources.count < AudioConstants.maxSimultaneousSources {
