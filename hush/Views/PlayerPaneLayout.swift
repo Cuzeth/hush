@@ -61,9 +61,14 @@ nonisolated enum PlayerPaneLayout: Equatable {
     /// fold (inactive, zero width) so the split doesn't jump as the device
     /// starts to fold. Empty before iOS 27.1 and on displays without one.
     static func foldFrames(in proxy: GeometryProxy) -> [CGRect] {
+        // `reservedRegions` only exists in the iOS 27.1+ SDK (Xcode 27,
+        // Swift 6.4). CI's runner tops out at Xcode 26.x, so gate at compile
+        // time too — `#available` alone doesn't stop the symbol lookup.
+        #if compiler(>=6.4)
         if #available(iOS 27.1, *) {
             return proxy.reservedRegions(kind: .division, options: .includeInactive).map(\.frame)
         }
+        #endif
         return []
     }
 }
