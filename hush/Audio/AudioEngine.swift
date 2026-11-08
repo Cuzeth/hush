@@ -48,6 +48,10 @@ final class AudioEngine: @unchecked Sendable {
     // Bumped by invalidateCachedBuffer; an in-flight load that captured an
     // older value decoded the old file and must not re-cache it.
     private var bufferGenerations: [String: UInt64] = [:]
+    // Attached sources still holding a buffer decoded before an
+    // invalidation (relink, crossfade edit). syncSources re-adds them on the
+    // next start instead of keeping the stale node in place.
+    private(set) var staleSourceIDs: Set<UUID> = []
 
     // Fade state — applied via mixerNode.outputVolume (never in render callbacks)
     private var fadeTarget: Float = 1.0
@@ -411,6 +415,7 @@ final class AudioEngine: @unchecked Sendable {
                    assetID: String? = nil,
                    maskingStrength: Float? = nil) {
         assertMainThread()
+        staleSourceIDs.remove(id)
         let config = SourceConfiguration(
             type: type,
             volume: volume,
@@ -775,6 +780,7 @@ final class AudioEngine: @unchecked Sendable {
 
     func removeSource(id: UUID) {
         assertMainThread()
+        staleSourceIDs.remove(id)
         sourceConfigurations.removeValue(forKey: id)
 
         // Fade out then remove. With the engine stopped nothing is audible,
@@ -883,10 +889,15 @@ final class AudioEngine: @unchecked Sendable {
         for rate in cachedBufferRates.removeValue(forKey: assetID) ?? [] {
             bufferCache.removeObject(forKey: Self.bufferCacheKey(assetID: assetID, sampleRate: rate) as NSString)
         }
+        for (id, config) in sourceConfigurations
+        where (config.assetID ?? config.type.defaultAssetID) == assetID && playerNodes[id] != nil {
+            staleSourceIDs.insert(id)
+        }
     }
 
     func removeAllSources() {
         assertMainThread()
+        staleSourceIDs.removeAll()
         sourceConfigurations.removeAll()
         removeAllAttachedSources()
         if !isPlaying {
@@ -938,14 +949,19 @@ final class AudioEngine: @unchecked Sendable {
                 maskingStrength: source.maskingStrength
             )
             let hasAttachedNode = sourceNodes[source.id] != nil || playerNodes[source.id] != nil
+            // A node holding a pre-invalidation decode is swapped only while
+            // the engine is stopped — a live swap would cut the waveform.
+            let needsReload = staleSourceIDs.contains(source.id) && !engine.isRunning
 
-            // New source, a different sound under the same id, or one with
-            // nothing attached (missing import, failed decode): (re)attach.
-            // The latter retries a file that may have come back.
+            // New source, a different sound under the same id, one with
+            // nothing attached (missing import, failed decode), or one whose
+            // buffer is stale: (re)attach. The missing case retries a file
+            // that may have come back.
             guard let current = sourceConfigurations[source.id],
                   current.type == desired.type,
                   current.assetID == desired.assetID,
-                  hasAttachedNode else {
+                  hasAttachedNode,
+                  !needsReload else {
                 addSource(id: source.id, type: desired.type, volume: desired.volume,
                           binauralRange: desired.binauralRange,
                           binauralFrequency: desired.binauralFrequency,

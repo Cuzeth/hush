@@ -320,3 +320,40 @@ struct EngineSourceSyncTests {
         #expect(engine.activeSourceIDs.isEmpty)
     }
 }
+
+// MARK: - Invalidated buffers get reloaded on the next start
+
+@MainActor
+struct StaleBufferReloadTests {
+
+    @Test func invalidatedSampleIsReattachedOnNextSyncWhileStopped() async throws {
+        let engine = AudioEngine.shared
+        engine.syncSources([])
+        defer { engine.syncSources([]) }
+
+        let asset = try #require(SoundAssetRegistry.asset(withID: "sample.rain.calming"))
+        let source = SoundSource(asset: asset, volume: 0.5)
+        engine.syncSources([source])
+
+        // Sample nodes attach once the (background) decode lands.
+        var node: AVAudioNode?
+        for _ in 0..<100 {
+            node = engine.attachedNode(for: source.id)
+            if node != nil { break }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        let original = try #require(node, "sample never attached")
+
+        // Unchanged sync keeps the node.
+        engine.syncSources([source])
+        #expect(engine.attachedNode(for: source.id) === original)
+
+        // Relink / crossfade edit invalidates: next sync (engine stopped) must
+        // drop the stale node rather than keep playing the old decode.
+        engine.invalidateCachedBuffer(assetID: asset.id)
+        #expect(engine.staleSourceIDs.contains(source.id))
+        engine.syncSources([source])
+        #expect(!engine.staleSourceIDs.contains(source.id))
+        #expect(engine.attachedNode(for: source.id) !== original)
+    }
+}
