@@ -1,4 +1,5 @@
 import AVFoundation
+import Synchronization
 
 protocol SoundGenerator: AnyObject, Sendable {
     /// Fill a mono buffer. For noise generators this is the primary path.
@@ -49,5 +50,30 @@ struct VolumeRamp: @unchecked Sendable {
         let step = (target - start) / Float(max(frameCount, 1))
         current = target
         return (start, step)
+    }
+}
+
+/// Counts completed render callbacks for one source node. The render thread
+/// bumps it at the end of every cycle (a single lock-free atomic add — no
+/// allocation, no locks); the main thread reads it to learn when a gain
+/// change has actually been rendered, e.g. that a removal's ramp to 0 is out
+/// before the node is detached. Held via `Unmanaged` in the render closure,
+/// like the generator.
+final class RenderTicker: @unchecked Sendable {
+    private let _count = Atomic<UInt32>(0)
+
+    nonisolated init() {}
+
+    nonisolated var count: UInt32 { _count.load(ordering: .acquiring) }
+
+    nonisolated func tick() {
+        _count.wrappingAdd(1, ordering: .releasing)
+    }
+
+    /// The cycle in flight when the gain was written may have read the old
+    /// target; the one after it can't have. So two completed cycles past
+    /// `mark` means the ramp has fully rendered. Wrap-safe.
+    nonisolated static func hasRenderedRamp(count: UInt32, since mark: UInt32) -> Bool {
+        count &- mark >= 2
     }
 }

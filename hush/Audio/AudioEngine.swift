@@ -12,7 +12,7 @@ private let logger = Logger(subsystem: "dev.abdeen.hush", category: "AudioEngine
 final class AudioEngine: @unchecked Sendable {
     static let shared = AudioEngine()
 
-    private struct SourceConfiguration: Sendable {
+    private struct SourceConfiguration: Sendable, Equatable {
         var type: SoundType
         var volume: Float
         var binauralRange: BinauralRange?
@@ -33,20 +33,32 @@ final class AudioEngine: @unchecked Sendable {
     // Generated sound sources (noise, binaural) — render callbacks
     private var sourceNodes: [UUID: AVAudioSourceNode] = [:]
     private var generators: [UUID: any SoundGenerator] = [:]
+    // Render-cycle counters, one per source node (see RenderTicker)
+    private var renderTickers: [UUID: RenderTicker] = [:]
 
     // Sample-based sources — AVAudioPlayerNode with pre-baked loop buffers
     private var playerNodes: [UUID: AVAudioPlayerNode] = [:]
     private var samplePlayers: [UUID: SampleLoopPlayer] = [:]
     private var sourceConfigurations: [UUID: SourceConfiguration] = [:]
 
-    // Lazy-load buffer cache: keyed by asset ID, evicted at 200MB
+    // Lazy-load buffer cache: keyed by asset ID + sample rate, evicted at 200MB
     private let bufferCache = NSCache<NSString, AVAudioPCMBuffer>()
+    // Rates each asset has been cached at, so invalidation can drop them all
+    private var cachedBufferRates: [String: Set<Double>] = [:]
+    // Bumped by invalidateCachedBuffer; an in-flight load that captured an
+    // older value decoded the old file and must not re-cache it.
+    private var bufferGenerations: [String: UInt64] = [:]
 
     // Fade state — applied via mixerNode.outputVolume (never in render callbacks)
     private var fadeTarget: Float = 1.0
-    private var fadeStep: Float = 0
+    private var fadeStartVolume: Float = 0
+    private var fadeStartTime: TimeInterval = 0
+    private var fadeDuration: TimeInterval = 0
     private var isFading = false
     private var fadeCompletion: (() -> Void)?
+    // Each new master fade bumps this; a tick from an older chain bails out,
+    // so overlapping chains can't double the fade speed.
+    private var fadeGeneration: UInt64 = 0
 
     // Per-source fade timers
     private var sourceFadeTimers: [UUID: Timer] = [:]
@@ -58,10 +70,14 @@ final class AudioEngine: @unchecked Sendable {
     private var format: AVAudioFormat!
 
     private(set) var isPlaying = false
-    private var isInterrupted = false
+    private(set) var isInterrupted = false
     private var isRebuildingGraph = false
-    private var shouldResumeAfterInterruption = false
+    private(set) var shouldResumeAfterInterruption = false
     private var remoteCommandsConfigured = false
+
+    /// Starts engine I/O. A seam so tests can exercise `start()`'s state
+    /// bookkeeping without audio hardware; production never reassigns it.
+    var startEngineIO: (AVAudioEngine) throws -> Void = { try $0.start() }
 
     // Background loading queue
     private let loadingQueue = DispatchQueue(label: "dev.abdeen.hush.audio.loading", qos: .userInitiated)
@@ -77,6 +93,12 @@ final class AudioEngine: @unchecked Sendable {
     var onPlaybackStateChanged: ((Bool) -> Void)?
     var onNextPreset: (() -> Void)?
     var onPreviousPreset: (() -> Void)?
+    /// Remote (Control Center / lock screen / AirPods) transport. The VM
+    /// routes these through its own play()/stop() so sources are re-applied
+    /// and UI state stays in sync; nil falls back to driving the engine.
+    var onRemotePlay: (() -> Void)?
+    var onRemotePause: (() -> Void)?
+    var onRemoteTogglePlayback: (() -> Void)?
     var onError: ((String) -> Void)?
 
     /// Fires when a sample source can't be played because the backing file
@@ -135,12 +157,12 @@ final class AudioEngine: @unchecked Sendable {
             let options: AVAudioSession.CategoryOptions = mixWithOthers ? [.mixWithOthers] : []
             try session.setCategory(.playback, mode: .default, options: options)
             Self.sessionCategoryConfigured = true
-            if isPlaying {
-                if mixWithOthers {
-                    clearNowPlaying()
-                } else {
-                    updateNowPlaying()
-                }
+            // A mixable session can't own Now Playing — that includes the
+            // paused info kept for lock-screen resume.
+            if mixWithOthers {
+                clearNowPlaying()
+            } else if isPlaying {
+                updateNowPlaying()
             }
         } catch {
             logger.error("Audio session reconfiguration failed: \(error.localizedDescription)")
@@ -278,7 +300,9 @@ final class AudioEngine: @unchecked Sendable {
         }
     }
 
-    private func handleInterruption(_ notification: Notification) {
+    /// Internal (not private) so tests can drive it with a synthesized
+    /// notification.
+    func handleInterruption(_ notification: Notification) {
         guard let userInfo = notification.userInfo,
               let typeValue = userInfo[AVAudioSessionInterruptionTypeKey] as? UInt,
               let type = AVAudioSession.InterruptionType(rawValue: typeValue) else { return }
@@ -287,8 +311,9 @@ final class AudioEngine: @unchecked Sendable {
         case .began:
             isInterrupted = true
             shouldResumeAfterInterruption = isPlaying
-            isFading = false
-            fadeCompletion = nil
+            // A stop() fade-out in flight would otherwise lose its completion
+            // and leave the session active for good.
+            cancelMasterFade(completingPendingStop: true)
             pauseAllPlayerNodes()
             engine.pause()
             // Reflect reality: we're paused. Leaving isPlaying true here let
@@ -297,6 +322,7 @@ final class AudioEngine: @unchecked Sendable {
             // through the whole interruption.
             isPlaying = false
             onPlaybackStateChanged?(false)
+            markNowPlayingPaused()
 
         case .ended:
             let optionsValue = userInfo[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0
@@ -311,7 +337,7 @@ final class AudioEngine: @unchecked Sendable {
                 rebuildAudioGraph(shouldResumePlayback: true)
             } else {
                 isPlaying = false
-                clearNowPlaying()
+                markNowPlayingPaused()
                 onPlaybackStateChanged?(false)
             }
 
@@ -325,20 +351,31 @@ final class AudioEngine: @unchecked Sendable {
               let reasonValue = userInfo[AVAudioSessionRouteChangeReasonKey] as? UInt,
               let reason = AVAudioSession.RouteChangeReason(rawValue: reasonValue) else { return }
 
-        if reason == .oldDeviceUnavailable {
-            let previousRoute = userInfo[AVAudioSessionRouteChangePreviousRouteKey] as? AVAudioSessionRouteDescription
-            let lostStereoRoute = previousRoute?.outputs.contains(where: Self.supportsBinauralPlayback) ?? false
+        guard reason == .oldDeviceUnavailable else { return }
+        let previousRoute = userInfo[AVAudioSessionRouteChangePreviousRouteKey] as? AVAudioSessionRouteDescription
+        let lostPrivateRoute = previousRoute?.outputs.contains { Self.pausesOnRouteLoss($0.portType) } ?? false
+        guard lostPrivateRoute, !Self.privateListeningRouteConnected else { return }
 
-            if lostStereoRoute,
-               generators.values.contains(where: { $0 is BinauralBeatGenerator }),
-               isPlaying,
-               !Self.headphonesConnected {
-                pauseAllPlayerNodes()
-                engine.pause()
-                isPlaying = false
-                clearNowPlaying()
-                onBinauralHeadphonesDisconnected?()
-            }
+        // Apple's guidance: losing headphones pauses, so nothing carries on
+        // out of the speaker. A stop() fade-out still in flight finishes now
+        // for the same reason.
+        if isStopFadePending {
+            cancelMasterFade(completingPendingStop: true)
+            return
+        }
+        guard isPlaying else { return }
+
+        let hadBinaural = generators.values.contains(where: { $0 is BinauralBeatGenerator })
+        cancelMasterFade(completingPendingStop: false)
+        pauseAllPlayerNodes()
+        engine.pause()
+        // isPlaying = false also keeps the engineConfigurationChange rebuild
+        // that follows a route change from resuming playback.
+        isPlaying = false
+        onPlaybackStateChanged?(false)
+        markNowPlayingPaused()
+        if hadBinaural {
+            onBinauralHeadphonesDisconnected?()
         }
     }
 
@@ -404,7 +441,12 @@ final class AudioEngine: @unchecked Sendable {
             binauralFrequency: config.binauralFrequency,
             toneFrequency: config.toneFrequency
         )
-        generator.volume = config.volume
+        // Added to a running engine: start silent and fade in. (VolumeRamp
+        // snaps its first buffer to the target, so the target must start at
+        // 0.) Under start()/rebuild the engine isn't running yet and the
+        // master fade covers the entry.
+        let fadeInOnAttach = engine.isRunning && !isInterrupted
+        generator.volume = fadeInOnAttach ? 0 : config.volume
         if let gen = generator as? SpeechMaskingGenerator, let strength = config.maskingStrength {
             gen.strength = strength
         }
@@ -415,10 +457,16 @@ final class AudioEngine: @unchecked Sendable {
             return
         }
 
-        let sourceNode = makeSourceNode(for: generator, format: fmt)
+        let ticker = RenderTicker()
+        let sourceNode = makeSourceNode(for: generator, ticker: ticker, format: fmt)
         engine.attach(sourceNode)
         engine.connect(sourceNode, to: mixerNode, format: format)
         sourceNodes[id] = sourceNode
+        renderTickers[id] = ticker
+
+        if fadeInOnAttach {
+            fadeInSource(id: id)
+        }
 
         logger.info("Playing generated: \(config.type.rawValue)")
     }
@@ -428,10 +476,12 @@ final class AudioEngine: @unchecked Sendable {
     /// dynamic cast per render cycle (swift_dynamicCast can take runtime
     /// locks on its slow path, which is off-limits on the audio thread).
     /// Callers pass the existential; SE-0352 opens it to bind `G`.
-    /// The generator is kept alive by the `generators` dictionary and, after
-    /// removal, briefly by `retiredGenerators`.
-    private func makeSourceNode<G: SoundGenerator>(for generator: G, format: AVAudioFormat) -> AVAudioSourceNode {
+    /// The generator and ticker are kept alive by the `generators` /
+    /// `renderTickers` dictionaries and, after removal, briefly by
+    /// `retiredGenerators` / `retiredRenderTickers`.
+    private func makeSourceNode<G: SoundGenerator>(for generator: G, ticker: RenderTicker, format: AVAudioFormat) -> AVAudioSourceNode {
         let unmanagedGen = Unmanaged.passUnretained(generator)
+        let unmanagedTicker = Unmanaged.passUnretained(ticker)
 
         return AVAudioSourceNode(format: format) { (isSilence, _, frameCount, outputData) -> OSStatus in
             let gen = unmanagedGen.takeUnretainedValue()
@@ -446,12 +496,87 @@ final class AudioEngine: @unchecked Sendable {
                 } else {
                     isSilence.pointee = true
                 }
+                unmanagedTicker.takeUnretainedValue().tick()
                 return noErr
             }
 
             gen.generateStereo(left: ch0, right: ch1, frameCount: frames)
+            unmanagedTicker.takeUnretainedValue().tick()
             return noErr
         }
+    }
+
+    // MARK: - Sample Buffers
+
+    /// Cache key for a pre-baked loop buffer. The rate is part of the key: a
+    /// buffer baked at 44.1 kHz must never be scheduled on a 48 kHz graph
+    /// after a route change (CarPlay, Bluetooth).
+    static func bufferCacheKey(assetID: String, sampleRate: Double) -> String {
+        "\(assetID)@\(Int(sampleRate.rounded()))"
+    }
+
+    /// AVAudioPlayerNode raises an uncatchable exception when a scheduled
+    /// buffer's format doesn't match its output format.
+    static func buffer(_ buffer: AVAudioPCMBuffer, matches format: AVAudioFormat) -> Bool {
+        buffer.format.sampleRate == format.sampleRate
+            && buffer.format.channelCount == format.channelCount
+    }
+
+    /// Current content generation for an asset's cached buffer. Internal for
+    /// tests.
+    func bufferGeneration(for assetID: String) -> UInt64 {
+        bufferGenerations[assetID, default: 0]
+    }
+
+    private func cachedBuffer(assetID: String, sampleRate: Double) -> AVAudioPCMBuffer? {
+        let key = Self.bufferCacheKey(assetID: assetID, sampleRate: sampleRate) as NSString
+        guard let buffer = bufferCache.object(forKey: key) else { return nil }
+        guard buffer.format.sampleRate == sampleRate else {
+            bufferCache.removeObject(forKey: key)
+            return nil
+        }
+        return buffer
+    }
+
+    private func cacheBuffer(_ buffer: AVAudioPCMBuffer, assetID: String, sampleRate: Double) {
+        let key = Self.bufferCacheKey(assetID: assetID, sampleRate: sampleRate) as NSString
+        let cost = Int(buffer.frameLength) * Int(buffer.format.channelCount) * 4
+        bufferCache.setObject(buffer, forKey: key, cost: cost)
+        cachedBufferRates[assetID, default: []].insert(sampleRate)
+    }
+
+    /// Schedules a freshly loaded loop on its node. Whether to fade is
+    /// decided now, not when the source was added: a load that lands after
+    /// the master fade-in finished would otherwise start at full level.
+    /// Returns false (scheduling nothing) when the buffer's format doesn't
+    /// match the node's.
+    @discardableResult
+    private func startLoadedSample(id: UUID, node: AVAudioPlayerNode, buffer: AVAudioPCMBuffer) -> Bool {
+        guard Self.buffer(buffer, matches: node.outputFormat(forBus: 0)) else {
+            logger.error("Loop buffer format doesn't match its node (\(buffer.format.sampleRate) Hz vs \(node.outputFormat(forBus: 0).sampleRate) Hz)")
+            return false
+        }
+        let volume = sourceConfigurations[id]?.volume ?? 0
+        // play() on a node whose engine isn't running raises an uncatchable
+        // NSException — interruptions pause the engine.
+        guard isPlaying && !isInterrupted && engine.isRunning else {
+            // Not playing: start() reschedules and plays it. Restore the
+            // target volume so it doesn't come up silent.
+            node.volume = volume
+            node.scheduleBuffer(buffer, at: nil, options: .loops)
+            return true
+        }
+
+        // While the master is still at 0 its fade-in covers this entry.
+        let audible = mixerNode.outputVolume > 0
+        node.stop()
+        node.volume = audible ? 0 : volume
+        node.scheduleBuffer(buffer, at: nil, options: .loops)
+        node.play()
+        if audible {
+            fadeInSource(id: id)
+        }
+        return true
     }
 
     private func addSampleSource(id: UUID, config: SourceConfiguration) {
@@ -462,6 +587,12 @@ final class AudioEngine: @unchecked Sendable {
             // Legacy fallback: try loading by sample file name
             if let fileName = config.type.sampleFileName {
                 addLegacySampleSource(id: id, config: config, fileName: fileName)
+            } else if let assetID = resolvedAssetID, assetID.hasPrefix("user.") {
+                // A user import deleted from the library no longer resolves at
+                // all. Surface it like a missing file so the layer gets the
+                // relink affordance instead of going silently quiet.
+                logger.warning("Skipping unresolved user asset: \(assetID)")
+                onSampleAssetMissing?(assetID)
             }
             return
         }
@@ -483,20 +614,20 @@ final class AudioEngine: @unchecked Sendable {
         }
 
         // Check buffer cache first
-        let cacheKey = assetID as NSString
-        if let cachedBuffer = bufferCache.object(forKey: cacheKey) {
-            finishSampleSetup(id: id, config: config, buffer: cachedBuffer, asset: asset)
+        let sr = actualSampleRate
+        if let cachedBuffer = cachedBuffer(assetID: assetID, sampleRate: sr),
+           finishSampleSetup(id: id, config: config, buffer: cachedBuffer, asset: asset) {
             return
         }
 
         // Lazy-load on background queue
-        let sr = actualSampleRate
-        let wasAlreadyPlaying = isPlaying
+        let generation = bufferGeneration(for: assetID)
         let playerNode = AVAudioPlayerNode()
         engine.attach(playerNode)
         engine.connect(playerNode, to: mixerNode, format: format)
-        // Only start at 0 if we need to fade in (adding to a running engine)
-        playerNode.volume = wasAlreadyPlaying ? 0 : config.volume
+        // Nothing is scheduled until the load lands; startLoadedSample
+        // decides the starting gain then.
+        playerNode.volume = config.volume
         playerNodes[id] = playerNode
 
         loadingQueue.async { [weak self] in
@@ -506,11 +637,15 @@ final class AudioEngine: @unchecked Sendable {
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
 
+                // invalidateCachedBuffer ran mid-decode: this buffer was baked
+                // from the old file (or old crossfade) and must not be cached
+                // or played.
+                let isCurrentContent = self.bufferGeneration(for: assetID) == generation
+
                 // Cache even if this load turns out to be stale — the decode
                 // work is still useful to the replacement node.
-                if let buffer = player.loopBuffer {
-                    let cost = Int(buffer.frameLength) * Int(buffer.format.channelCount) * 4
-                    self.bufferCache.setObject(buffer, forKey: cacheKey, cost: cost)
+                if let buffer = player.loopBuffer, isCurrentContent {
+                    self.cacheBuffer(buffer, assetID: assetID, sampleRate: sr)
                 }
 
                 // Stale load: a graph rebuild replaced the node under this id
@@ -522,30 +657,25 @@ final class AudioEngine: @unchecked Sendable {
                 // the detach, but scheduling + fadeInSource here would cancel
                 // that fade and orphan a looping node with no UI to stop it.
                 // Tear it down instead.
-                guard self.sourceConfigurations[id] != nil else {
+                guard let currentConfig = self.sourceConfigurations[id] else {
                     self.removeAttachedSource(id: id)
+                    return
+                }
+
+                // Content changed under the decode — load again from the
+                // current file.
+                guard isCurrentContent else {
+                    self.removeAttachedSource(id: id)
+                    self.attachSource(id: id, config: currentConfig)
                     return
                 }
 
                 self.samplePlayers[id] = player
 
-                if let buffer = player.loopBuffer {
-                    currentNode.scheduleBuffer(buffer, at: nil, options: .loops)
-                    // play() on a node whose engine isn't running raises an
-                    // uncatchable NSException — interruptions pause the engine.
-                    if self.isPlaying && !self.isInterrupted && self.engine.isRunning {
-                        currentNode.play()
-                        // Only per-source fade if added to a running engine
-                        if wasAlreadyPlaying {
-                            self.fadeInSource(id: id, targetVolume: config.volume)
-                        }
-                    } else {
-                        // Playback stopped before the load finished. Restore
-                        // the target volume so the next start() doesn't play
-                        // this source silently at the fade-in's 0.
-                        currentNode.volume = config.volume
-                    }
-                } else {
+                let started = player.loopBuffer.map {
+                    self.startLoadedSample(id: id, node: currentNode, buffer: $0)
+                } ?? false
+                if !started {
                     // Decode failed (e.g. user file was corrupted between the
                     // URL probe and now). Surface to the VM the same way a
                     // missing-URL asset does, and tear down the orphaned node
@@ -566,7 +696,22 @@ final class AudioEngine: @unchecked Sendable {
         logger.info("Playing sample: \(asset.displayName) [\(asset.id)]")
     }
 
-    private func finishSampleSetup(id: UUID, config: SourceConfiguration, buffer: AVAudioPCMBuffer, asset: SoundAsset) {
+    /// Returns false (attaching nothing) when the cached buffer doesn't fit
+    /// the graph; the caller falls back to a fresh load.
+    private func finishSampleSetup(id: UUID, config: SourceConfiguration, buffer: AVAudioPCMBuffer, asset: SoundAsset) -> Bool {
+        let playerNode = AVAudioPlayerNode()
+        engine.attach(playerNode)
+        engine.connect(playerNode, to: mixerNode, format: format)
+        playerNode.volume = config.volume
+        playerNodes[id] = playerNode
+
+        guard startLoadedSample(id: id, node: playerNode, buffer: buffer) else {
+            engine.disconnectNodeOutput(playerNode)
+            engine.detach(playerNode)
+            playerNodes.removeValue(forKey: id)
+            return false
+        }
+
         let player = SampleLoopPlayer()
         // Hold the buffer strongly: with only the node schedule + NSCache
         // referencing it, an eviction after stop() left the source silent on
@@ -574,36 +719,16 @@ final class AudioEngine: @unchecked Sendable {
         player.loopBuffer = buffer
         samplePlayers[id] = player
 
-        let wasAlreadyPlaying = isPlaying
-        let playerNode = AVAudioPlayerNode()
-        engine.attach(playerNode)
-        engine.connect(playerNode, to: mixerNode, format: format)
-        playerNode.volume = wasAlreadyPlaying ? 0 : config.volume
-
-        playerNode.scheduleBuffer(buffer, at: nil, options: .loops)
-        playerNodes[id] = playerNode
-
-        // Same engine-running gate as the async path: play() on a paused
-        // engine (mid-interruption) raises an uncatchable NSException.
-        if isPlaying && !isInterrupted && engine.isRunning {
-            playerNode.play()
-            if wasAlreadyPlaying {
-                fadeInSource(id: id, targetVolume: config.volume)
-            }
-        } else {
-            playerNode.volume = config.volume
-        }
-
         logger.info("Playing sample (cached): \(asset.displayName) [\(asset.id)]")
+        return true
     }
 
     private func addLegacySampleSource(id: UUID, config: SourceConfiguration, fileName: String) {
         let sr = actualSampleRate
-        let wasAlreadyPlaying = isPlaying
         let playerNode = AVAudioPlayerNode()
         engine.attach(playerNode)
         engine.connect(playerNode, to: mixerNode, format: format)
-        playerNode.volume = wasAlreadyPlaying ? 0 : config.volume
+        playerNode.volume = config.volume
         playerNodes[id] = playerNode
 
         loadingQueue.async { [weak self] in
@@ -622,17 +747,10 @@ final class AudioEngine: @unchecked Sendable {
 
                 self.samplePlayers[id] = player
 
-                if let buffer = player.loopBuffer {
-                    currentNode.scheduleBuffer(buffer, at: nil, options: .loops)
-                    if self.isPlaying && !self.isInterrupted && self.engine.isRunning {
-                        currentNode.play()
-                        if wasAlreadyPlaying {
-                            self.fadeInSource(id: id, targetVolume: config.volume)
-                        }
-                    } else {
-                        currentNode.volume = config.volume
-                    }
-                } else {
+                let started = player.loopBuffer.map {
+                    self.startLoadedSample(id: id, node: currentNode, buffer: $0)
+                } ?? false
+                if !started {
                     // Same surface as `addSampleSource` — a corrupt bundle
                     // shouldn't fail silently for legacy types either, but
                     // bundled missing isn't user-actionable, so we only
@@ -659,22 +777,51 @@ final class AudioEngine: @unchecked Sendable {
         assertMainThread()
         sourceConfigurations.removeValue(forKey: id)
 
-        // Fade out then remove
-        if playerNodes[id] != nil {
+        // Fade out then remove. With the engine stopped nothing is audible,
+        // so detach right away rather than leave a node a start() would
+        // replay mid-fade.
+        if playerNodes[id] != nil, engine.isRunning {
             fadeOutSource(id: id) { [weak self] in
                 self?.removeAttachedSource(id: id)
             }
-        } else if generators[id] != nil, isPlaying {
+        } else if let generator = generators[id], let node = sourceNodes[id],
+                  let ticker = renderTickers[id], engine.isRunning {
             // Ramp the generator to silence (VolumeRamp spreads the change
             // across the next render buffer), then detach clear of the click
-            // a mid-waveform truncation would cause.
-            generators[id]?.volume = 0
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
-                guard let self, self.sourceConfigurations[id] == nil else { return }
-                self.removeAttachedSource(id: id)
-            }
+            // a mid-waveform truncation would cause — but only once that
+            // ramp has actually rendered. A fixed delay was shorter than one
+            // I/O buffer at the 4096-frame background size.
+            sourceFadeTimers[id]?.invalidate()
+            sourceFadeTimers.removeValue(forKey: id)
+            generator.volume = 0
+            detachWhenRampRendered(id: id, node: node, ticker: ticker, mark: ticker.count,
+                                   deadline: ProcessInfo.processInfo.systemUptime + Self.generatorDetachTimeout)
         } else {
             removeAttachedSource(id: id)
+        }
+        // Nothing left to resume — don't leave a paused widget behind.
+        if !isPlaying && sourceConfigurations.isEmpty {
+            clearNowPlaying()
+        }
+    }
+
+    /// Upper bound on waiting for a removal's ramp to render. Far past two
+    /// 4096-frame buffers; only hit if renders stall without the engine
+    /// reporting stopped.
+    private static let generatorDetachTimeout: TimeInterval = 0.5
+
+    private func detachWhenRampRendered(id: UUID, node: AVAudioSourceNode, ticker: RenderTicker,
+                                        mark: UInt32, deadline: TimeInterval) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.01) { [weak self] in
+            // Re-added under the same id, or torn down by a rebuild.
+            guard let self, self.sourceConfigurations[id] == nil, self.sourceNodes[id] === node else { return }
+            if RenderTicker.hasRenderedRamp(count: ticker.count, since: mark)
+                || !self.engine.isRunning
+                || ProcessInfo.processInfo.systemUptime >= deadline {
+                self.removeAttachedSource(id: id)
+            } else {
+                self.detachWhenRampRendered(id: id, node: node, ticker: ticker, mark: mark, deadline: deadline)
+            }
         }
     }
 
@@ -687,8 +834,9 @@ final class AudioEngine: @unchecked Sendable {
             engine.disconnectNodeOutput(node)
             engine.detach(node)
         }
+        let ticker = renderTickers.removeValue(forKey: id)
         if let generator = generators.removeValue(forKey: id) {
-            retireGenerator(generator)
+            retireGenerator(generator, ticker: ticker)
         }
 
         // Sample source
@@ -707,12 +855,19 @@ final class AudioEngine: @unchecked Sendable {
     /// briefly instead; half a second is orders of magnitude past any render
     /// cycle.
     private var retiredGenerators: [any SoundGenerator] = []
+    // The render callback holds its ticker unretained too — parked alongside.
+    private var retiredRenderTickers: [RenderTicker] = []
 
-    private func retireGenerator(_ generator: any SoundGenerator) {
+    private func retireGenerator(_ generator: any SoundGenerator, ticker: RenderTicker?) {
         retiredGenerators.append(generator)
+        if let ticker { retiredRenderTickers.append(ticker) }
+        let hasTicker = ticker != nil
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
             guard let self, !self.retiredGenerators.isEmpty else { return }
             self.retiredGenerators.removeFirst()
+            if hasTicker, !self.retiredRenderTickers.isEmpty {
+                self.retiredRenderTickers.removeFirst()
+            }
         }
     }
 
@@ -722,18 +877,98 @@ final class AudioEngine: @unchecked Sendable {
     /// or old crossfade until the app restarts.
     func invalidateCachedBuffer(assetID: String) {
         assertMainThread()
-        bufferCache.removeObject(forKey: assetID as NSString)
+        // An in-flight load captured the old generation; it now skips its
+        // cache write instead of re-caching the stale decode.
+        bufferGenerations[assetID, default: 0] &+= 1
+        for rate in cachedBufferRates.removeValue(forKey: assetID) ?? [] {
+            bufferCache.removeObject(forKey: Self.bufferCacheKey(assetID: assetID, sampleRate: rate) as NSString)
+        }
     }
 
     func removeAllSources() {
         assertMainThread()
         sourceConfigurations.removeAll()
         removeAllAttachedSources()
+        if !isPlaying {
+            clearNowPlaying()
+        }
     }
 
     private func removeAllAttachedSources() {
         for id in Array(sourceNodes.keys) { removeAttachedSource(id: id) }
         for id in Array(playerNodes.keys) { removeAttachedSource(id: id) }
+    }
+
+    /// IDs of the sources the engine is configured to play.
+    var activeSourceIDs: Set<UUID> {
+        Set(sourceConfigurations.keys)
+    }
+
+    /// Configured (target) volume for a source. Internal for tests.
+    func configuredVolume(for id: UUID) -> Float? {
+        sourceConfigurations[id]?.volume
+    }
+
+    /// The node currently attached for a source. Internal for tests: lets
+    /// them tell an in-place update from a detach + re-attach.
+    func attachedNode(for id: UUID) -> AVAudioNode? {
+        sourceNodes[id] ?? playerNodes[id]
+    }
+
+    /// Brings the engine's sources in line with `sources` without tearing
+    /// down the ones that stay: removed sources fade out, new ones are added,
+    /// and kept ones get parameter updates in place. Replaces the old
+    /// remove-all + re-add on every play(), which hard-detached nodes (a
+    /// click on a quick pause → play) and re-decoded every sample.
+    func syncSources(_ sources: [SoundSource]) {
+        assertMainThread()
+        let desiredIDs = Set(sources.map(\.id))
+        for id in Array(sourceConfigurations.keys) where !desiredIDs.contains(id) {
+            removeSource(id: id)
+        }
+
+        for source in sources {
+            let desired = SourceConfiguration(
+                type: source.type,
+                volume: source.volume,
+                binauralRange: source.binauralRange,
+                binauralFrequency: source.binauralFrequency,
+                toneFrequency: source.toneFrequency,
+                assetID: source.assetID,
+                maskingStrength: source.maskingStrength
+            )
+            let hasAttachedNode = sourceNodes[source.id] != nil || playerNodes[source.id] != nil
+
+            // New source, a different sound under the same id, or one with
+            // nothing attached (missing import, failed decode): (re)attach.
+            // The latter retries a file that may have come back.
+            guard let current = sourceConfigurations[source.id],
+                  current.type == desired.type,
+                  current.assetID == desired.assetID,
+                  hasAttachedNode else {
+                addSource(id: source.id, type: desired.type, volume: desired.volume,
+                          binauralRange: desired.binauralRange,
+                          binauralFrequency: desired.binauralFrequency,
+                          toneFrequency: desired.toneFrequency,
+                          assetID: desired.assetID,
+                          maskingStrength: desired.maskingStrength)
+                continue
+            }
+            guard current != desired else { continue }
+
+            if current.volume != desired.volume {
+                setVolume(desired.volume, for: source.id)
+            }
+            if current.binauralRange != desired.binauralRange || current.binauralFrequency != desired.binauralFrequency {
+                updateBinauralParameters(for: source.id, range: desired.binauralRange, frequency: desired.binauralFrequency)
+            }
+            if current.toneFrequency != desired.toneFrequency, let frequency = desired.toneFrequency {
+                updateToneFrequency(for: source.id, frequency: frequency)
+            }
+            if current.maskingStrength != desired.maskingStrength, let strength = desired.maskingStrength {
+                updateMaskingStrength(for: source.id, strength: strength)
+            }
+        }
     }
 
     func setVolume(_ volume: Float, for id: UUID) {
@@ -742,6 +977,10 @@ final class AudioEngine: @unchecked Sendable {
             config.volume = volume
             sourceConfigurations[id] = config
         }
+        // A per-source fade in flight reads its target from the
+        // configuration on every tick; writing the gain here would jump it
+        // to full and the next tick would yank it back.
+        guard sourceFadeTimers[id] == nil else { return }
         // Generated sources: atomic store read by the render callback
         generators[id]?.volume = volume
         // Sample sources: AVAudioPlayerNode.volume is thread-safe
@@ -809,25 +1048,47 @@ final class AudioEngine: @unchecked Sendable {
 
     // MARK: - Per-Source Fade In/Out
 
-    private func fadeInSource(id: UUID, targetVolume: Float, duration: TimeInterval = 0.5) {
-        guard let node = playerNodes[id] else { return }
+    /// Applied gain for one source: the player node's volume, or the
+    /// generator's atomic target (VolumeRamp smooths between writes).
+    private func setSourceGain(_ gain: Float, for id: UUID) {
+        if let node = playerNodes[id] {
+            node.volume = gain
+        } else {
+            generators[id]?.volume = gain
+        }
+    }
+
+    /// Fades a sample or generator in from 0 to its *configured* volume,
+    /// read on every tick so a setVolume mid-fade lands instead of being
+    /// overwritten by a captured target.
+    private func fadeInSource(id: UUID, duration: TimeInterval = 0.5) {
+        guard playerNodes[id] != nil || generators[id] != nil else { return }
         sourceFadeTimers[id]?.invalidate()
 
-        node.volume = 0
+        setSourceGain(0, for: id)
         let steps = max(Int(duration * 60), 1)
-        let step = targetVolume / Float(steps)
-        var current: Float = 0
+        var tick = 0
 
-        let timer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60.0, repeats: true) { [weak self] timer in
-            current += step
-            if current >= targetVolume {
-                node.volume = targetVolume
+        let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] timer in
+            guard let self else {
                 timer.invalidate()
-                self?.sourceFadeTimers.removeValue(forKey: id)
-            } else {
-                node.volume = current
+                return
+            }
+            tick += 1
+            let target = self.sourceConfigurations[id]?.volume
+            if tick >= steps || target == nil {
+                if let target { self.setSourceGain(target, for: id) }
+                timer.invalidate()
+                if self.sourceFadeTimers[id] === timer {
+                    self.sourceFadeTimers.removeValue(forKey: id)
+                }
+            } else if let target {
+                self.setSourceGain(target * Float(tick) / Float(steps), for: id)
             }
         }
+        // .common, not .default: the fade must keep running while a scroll
+        // view is tracking.
+        RunLoop.main.add(timer, forMode: .common)
         sourceFadeTimers[id] = timer
     }
 
@@ -843,7 +1104,7 @@ final class AudioEngine: @unchecked Sendable {
         let step = startVolume / Float(steps)
         var current = startVolume
 
-        let timer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60.0, repeats: true) { [weak self] timer in
+        let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] timer in
             current -= step
             if current <= 0 {
                 node.volume = 0
@@ -854,33 +1115,67 @@ final class AudioEngine: @unchecked Sendable {
                 node.volume = current
             }
         }
+        RunLoop.main.add(timer, forMode: .common)
         sourceFadeTimers[id] = timer
     }
 
     // MARK: - Playback Control
 
+    enum StartPath: Equatable {
+        /// Already playing: nothing to do. Restarting stopped every loop and
+        /// snapped the master to 0.
+        case alreadyPlaying
+        /// start() landed during stop()'s fade-out: cancel it and fade back
+        /// up from the current level, leaving running nodes alone.
+        case resumeFromFadeOut
+        case fullStart
+    }
+
+    static func startPath(isPlaying: Bool, engineRunning: Bool, stopFadePending: Bool) -> StartPath {
+        guard engineRunning else { return .fullStart }
+        if isPlaying { return .alreadyPlaying }
+        if stopFadePending { return .resumeFromFadeOut }
+        return .fullStart
+    }
+
     func start() {
         assertMainThread()
-        if isFading {
-            isFading = false
-            fadeCompletion = nil
+
+        switch Self.startPath(isPlaying: isPlaying, engineRunning: engine.isRunning,
+                              stopFadePending: isStopFadePending) {
+        case .alreadyPlaying:
+            // The VM may have renamed the mix just before calling.
+            publishNowPlayingForPlayback()
+            return
+
+        case .resumeFromFadeOut:
+            cancelMasterFade(completingPendingStop: false)
+            noteEngineRunning()
+            isPlaying = true
+            // Sources synced in during the fade-out window are attached but idle.
+            startIdlePlayerNodes()
+            fadeIn(fromCurrentVolume: true)
+            publishNowPlayingForPlayback()
+            onPlaybackStateChanged?(true)
+            return
+
+        case .fullStart:
+            break
         }
 
+        cancelMasterFade(completingPendingStop: false)
         configureAudioSession()
         activateAudioSession()
 
         do {
             if !engine.isRunning {
-                try engine.start()
+                try startEngineIO(engine)
             }
+            noteEngineRunning()
             isPlaying = true
             startAllPlayerNodes()
             fadeIn()
-            if Self.mixWithOtherAudio {
-                clearNowPlaying()
-            } else {
-                updateNowPlaying()
-            }
+            publishNowPlayingForPlayback()
             onPlaybackStateChanged?(true)
         } catch {
             logger.error("Engine start failed: \(error.localizedDescription)")
@@ -890,17 +1185,29 @@ final class AudioEngine: @unchecked Sendable {
         }
     }
 
+    /// The engine's I/O is up, so any interruption is over — whether or not
+    /// iOS ever delivered `.ended` (it doesn't guarantee one, e.g. when
+    /// another app takes the session). A stale flag silenced sounds added
+    /// mid-play and made every route change stop playback.
+    private func noteEngineRunning() {
+        isInterrupted = false
+        shouldResumeAfterInterruption = false
+    }
+
     func stop() {
         assertMainThread()
         guard isPlaying else { return }
         isPlaying = false
         onPlaybackStateChanged?(false)
+        markNowPlayingPaused()
         fadeOut { [weak self] in
             guard let self else { return }
             self.pauseAllPlayerNodes()
             self.engine.stop()
             try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
-            self.clearNowPlaying()
+            // Keep the (paused) Now Playing info so the lock screen can
+            // resume; it's only cleared once there's nothing to resume.
+            self.markNowPlayingPaused()
         }
     }
 
@@ -908,15 +1215,54 @@ final class AudioEngine: @unchecked Sendable {
         if isPlaying { stop() } else { start() }
     }
 
+    // MARK: - Remote Transport
+
+    func handleRemotePlay() {
+        assertMainThread()
+        if let onRemotePlay { onRemotePlay() } else { start() }
+    }
+
+    func handleRemotePause() {
+        assertMainThread()
+        if let onRemotePause { onRemotePause() } else { stop() }
+    }
+
+    func handleRemoteTogglePlayback() {
+        assertMainThread()
+        if let onRemoteTogglePlayback { onRemoteTogglePlayback() } else { togglePlayback() }
+    }
+
     // MARK: - Player Node Lifecycle
 
+    /// Schedules (if needed) and plays nodes that aren't playing, fading
+    /// each in — for start() during a fade-out, where the nodes that kept
+    /// running must not restart.
+    private func startIdlePlayerNodes() {
+        for (id, node) in playerNodes where !node.isPlaying && sourceConfigurations[id] != nil {
+            let nodeFormat = node.outputFormat(forBus: 0)
+            guard let buffer = samplePlayers[id]?.loopBuffer, Self.buffer(buffer, matches: nodeFormat) else {
+                // Still loading: startLoadedSample schedules and fades it.
+                node.play()
+                continue
+            }
+            node.stop()
+            node.volume = 0
+            node.scheduleBuffer(buffer, at: nil, options: .loops)
+            node.play()
+            fadeInSource(id: id)
+        }
+    }
+
     private func startAllPlayerNodes() {
-        for (id, node) in playerNodes {
-            if let buffer = samplePlayers[id]?.loopBuffer {
+        // Removed sources still fading out are on their way out — don't
+        // restart them.
+        for (id, node) in playerNodes where sourceConfigurations[id] != nil {
+            let nodeFormat = node.outputFormat(forBus: 0)
+            if let buffer = samplePlayers[id]?.loopBuffer, Self.buffer(buffer, matches: nodeFormat) {
                 node.stop()
                 node.scheduleBuffer(buffer, at: nil, options: .loops)
             } else if let assetID = sourceConfigurations[id]?.assetID ?? sourceConfigurations[id]?.type.defaultAssetID,
-                      let cached = bufferCache.object(forKey: assetID as NSString) {
+                      let cached = cachedBuffer(assetID: assetID, sampleRate: nodeFormat.sampleRate) {
                 node.stop()
                 node.scheduleBuffer(cached, at: nil, options: .loops)
             }
@@ -944,72 +1290,110 @@ final class AudioEngine: @unchecked Sendable {
     /// window lands at the reduced level instead of fighting it.
     private var timerFadeMultiplier: Float = 1.0
 
-    private func fadeIn(duration: TimeInterval? = nil) {
+    /// How long the master takes to follow each focus-timer multiplier
+    /// change. The VM reports at 1 Hz, so ramping over ~1 s turns the steps
+    /// into one continuous fade.
+    private static let timerFadeRampDuration: TimeInterval = 1.0
+
+    /// stop()'s fade-out is running and its completion (pause nodes, stop
+    /// the engine, deactivate the session) hasn't fired yet.
+    private var isStopFadePending: Bool {
+        isFading && fadeCompletion != nil
+    }
+
+    private func fadeIn(duration: TimeInterval? = nil, fromCurrentVolume: Bool = false) {
         let duration = duration ?? configuredFadeDuration
-        mixerNode.outputVolume = 0
-        fadeTarget = timerFadeMultiplier
-        guard fadeTarget > 0 else {
+        if !fromCurrentVolume {
+            mixerNode.outputVolume = 0
+        }
+        guard timerFadeMultiplier > 0 || mixerNode.outputVolume > 0 else {
             // Timer fade is already at silence — nothing to ramp to.
-            isFading = false
+            cancelMasterFade(completingPendingStop: false)
             return
         }
-        let steps = Int(duration * 60)
-        fadeStep = fadeTarget / Float(max(steps, 1))
-        isFading = true
-        fadeCompletion = nil
-        performFade()
+        rampMaster(to: timerFadeMultiplier, duration: duration)
     }
 
     private func fadeOut(duration: TimeInterval? = nil, completion: @escaping () -> Void) {
         let duration = duration ?? configuredFadeDuration
-        fadeTarget = 0
-        let startVolume = mixerNode.outputVolume
-        guard startVolume > 0 else {
-            // Already silent. A zero (or -0.0) step never crosses the target,
-            // which used to spin performFade forever and drop the completion.
-            isFading = false
-            fadeCompletion = nil
+        guard mixerNode.outputVolume > 0 else {
+            // Already silent — finish now rather than tick toward nothing.
+            cancelMasterFade(completingPendingStop: false)
             completion()
             return
         }
-        let steps = Int(duration * 60)
-        fadeStep = -startVolume / Float(max(steps, 1))
-        isFading = true
-        fadeCompletion = completion
-        performFade()
+        rampMaster(to: 0, duration: duration, completion: completion)
     }
 
-    private func performFade() {
-        guard isFading else { return }
+    /// Starts a linear master ramp from the current level. Supersedes any
+    /// fade in flight (its completion is dropped — callers that must keep
+    /// one use cancelMasterFade(completingPendingStop:) first).
+    private func rampMaster(to target: Float, duration: TimeInterval, completion: (() -> Void)? = nil) {
+        fadeGeneration &+= 1
+        fadeTarget = target
+        fadeStartVolume = mixerNode.outputVolume
+        fadeStartTime = ProcessInfo.processInfo.systemUptime
+        fadeDuration = max(duration, 0)
+        fadeCompletion = completion
+        isFading = true
+        performFade(generation: fadeGeneration)
+    }
+
+    /// Stops the master fade in flight. With `completingPendingStop`, a
+    /// stop() fade-out's pending work runs now instead of being dropped —
+    /// otherwise the session would never deactivate.
+    private func cancelMasterFade(completingPendingStop: Bool) {
+        let pending = fadeCompletion
+        fadeGeneration &+= 1
+        isFading = false
+        fadeCompletion = nil
+        if completingPendingStop {
+            pending?()
+        }
+    }
+
+    private func performFade(generation: UInt64) {
+        guard isFading, generation == fadeGeneration else { return }
         let interval = 1.0 / 60.0
 
         DispatchQueue.main.asyncAfter(deadline: .now() + interval) { [weak self] in
-            guard let self, self.isFading else { return }
+            // A newer fade (or a cancel) owns the master now.
+            guard let self, self.isFading, self.fadeGeneration == generation else { return }
 
-            var vol = self.mixerNode.outputVolume + self.fadeStep
+            let elapsed = ProcessInfo.processInfo.systemUptime - self.fadeStartTime
+            let progress = self.fadeDuration > 0 ? min(Float(elapsed / self.fadeDuration), 1) : 1
 
-            if self.fadeStep == 0 ||
-               (self.fadeStep > 0 && vol >= self.fadeTarget) ||
-               (self.fadeStep < 0 && vol <= self.fadeTarget) {
-                vol = self.fadeTarget
+            if progress >= 1 {
                 self.isFading = false
-                self.mixerNode.outputVolume = vol
-                self.fadeCompletion?()
+                self.mixerNode.outputVolume = self.fadeTarget
+                let completion = self.fadeCompletion
                 self.fadeCompletion = nil
+                completion?()
             } else {
-                self.mixerNode.outputVolume = vol
-                self.performFade()
+                self.mixerNode.outputVolume = self.fadeStartVolume
+                    + (self.fadeTarget - self.fadeStartVolume) * progress
+                self.performFade(generation: generation)
             }
         }
     }
 
     func applyTimerFade(_ multiplier: Float) {
         assertMainThread()
-        timerFadeMultiplier = max(0, min(1, multiplier))
-        // Don't fight an in-progress master fade — it targets the multiplier
-        // and lands there on completion.
-        guard !isFading else { return }
-        mixerNode.outputVolume = timerFadeMultiplier
+        let level = max(0, min(1, multiplier))
+        timerFadeMultiplier = level
+        // Paused: the next fadeIn targets the multiplier. stop()'s fade-out
+        // owns the master until it completes.
+        guard isPlaying, !isStopFadePending else { return }
+        // Already there, or already heading there.
+        if isFading ? fadeTarget == level : mixerNode.outputVolume == level { return }
+        // Ramp from wherever the master is — never assign it outright, which
+        // stepped audibly at 1 Hz and jumped to full on timer cancel. An
+        // in-progress fade-in is continued toward the new level over at
+        // least its remaining time, so it isn't cut short.
+        let remaining = isFading
+            ? max(0, fadeStartTime + fadeDuration - ProcessInfo.processInfo.systemUptime)
+            : 0
+        rampMaster(to: level, duration: max(Self.timerFadeRampDuration, remaining))
     }
 
     // MARK: - Generator Factory
@@ -1072,21 +1456,23 @@ final class AudioEngine: @unchecked Sendable {
 
         // All handlers hop to main: MPRemoteCommandCenter doesn't guarantee
         // the calling thread, and start()/stop() assert main-queue.
+        // Transport goes through the VM (handleRemote*) so a remote Play
+        // re-applies the current mix instead of resuming a stale graph.
         center.playCommand.isEnabled = true
         center.playCommand.addTarget { [weak self] _ in
-            DispatchQueue.main.async { self?.start() }
+            DispatchQueue.main.async { self?.handleRemotePlay() }
             return .success
         }
 
         center.pauseCommand.isEnabled = true
         center.pauseCommand.addTarget { [weak self] _ in
-            DispatchQueue.main.async { self?.stop() }
+            DispatchQueue.main.async { self?.handleRemotePause() }
             return .success
         }
 
         center.togglePlayPauseCommand.isEnabled = true
         center.togglePlayPauseCommand.addTarget { [weak self] _ in
-            DispatchQueue.main.async { self?.togglePlayback() }
+            DispatchQueue.main.async { self?.handleRemoteTogglePlayback() }
             return .success
         }
 
@@ -1175,6 +1561,29 @@ final class AudioEngine: @unchecked Sendable {
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
     }
 
+    /// Now Playing for active playback. A mixable session can't own the
+    /// lock-screen widget, so mix-with-others clears it instead.
+    private func publishNowPlayingForPlayback() {
+        if Self.mixWithOtherAudio {
+            clearNowPlaying()
+        } else {
+            updateNowPlaying()
+        }
+    }
+
+    /// A pause keeps the info (rate 0) so the lock-screen controls stay up
+    /// and can resume. It's cleared only when there's nothing to resume.
+    private func markNowPlayingPaused() {
+        guard !Self.mixWithOtherAudio, !sourceConfigurations.isEmpty else {
+            clearNowPlaying()
+            return
+        }
+        let center = MPNowPlayingInfoCenter.default()
+        guard var info = center.nowPlayingInfo else { return }
+        info[MPNowPlayingInfoPropertyPlaybackRate] = 0.0
+        center.nowPlayingInfo = info
+    }
+
     private func clearNowPlaying() {
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
     }
@@ -1187,8 +1596,13 @@ final class AudioEngine: @unchecked Sendable {
 
         let configs = sourceConfigurations
         let targetVolume = mixerNode.outputVolume
+        // A fade toward a nonzero level (start's fade-in, a timer ramp) was
+        // mid-flight: the captured volume is a waypoint, not the target.
+        let wasFadingUp = isFading && fadeCompletion == nil && fadeTarget > 0
 
-        isFading = false
+        // A stop() fade-out in flight would lose its completion here; run
+        // the pending stop work (incl. session deactivation) now.
+        cancelMasterFade(completingPendingStop: true)
         // Invalidate all per-source fade timers
         for (_, timer) in sourceFadeTimers { timer.invalidate() }
         sourceFadeTimers.removeAll()
@@ -1200,6 +1614,7 @@ final class AudioEngine: @unchecked Sendable {
         // brand-new AVAudioEngine, so old nodes are deallocated with the old engine.
         sourceNodes.removeAll()
         generators.removeAll()
+        renderTickers.removeAll()
         playerNodes.removeAll()
         samplePlayers.removeAll()
 
@@ -1216,22 +1631,25 @@ final class AudioEngine: @unchecked Sendable {
             do {
                 activateAudioSession()
                 try engine.start()
+                noteEngineRunning()
                 isPlaying = true
                 startAllPlayerNodes()
                 if targetVolume <= 0 {
                     fadeIn()
+                } else if wasFadingUp {
+                    rampMaster(to: timerFadeMultiplier, duration: configuredFadeDuration)
                 }
-                updateNowPlaying()
+                publishNowPlayingForPlayback()
                 onPlaybackStateChanged?(true)
             } catch {
                 isPlaying = false
-                clearNowPlaying()
+                markNowPlayingPaused()
                 onPlaybackStateChanged?(false)
                 logger.error("Audio graph rebuild failed to restart playback: \(error.localizedDescription)")
             }
         } else {
             isPlaying = false
-            clearNowPlaying()
+            markNowPlayingPaused()
             onPlaybackStateChanged?(false)
         }
 
@@ -1254,5 +1672,22 @@ final class AudioEngine: @unchecked Sendable {
     nonisolated static var headphonesConnected: Bool {
         let outputs = AVAudioSession.sharedInstance().currentRoute.outputs
         return outputs.contains(where: supportsBinauralPlayback)
+    }
+
+    /// Personal/private outputs whose disappearance must pause playback
+    /// rather than fall through to the speaker (Apple's route-change
+    /// guidance). Internal for tests.
+    nonisolated static func pausesOnRouteLoss(_ portType: AVAudioSession.Port) -> Bool {
+        switch portType {
+        case .headphones, .bluetoothA2DP, .bluetoothHFP, .bluetoothLE,
+             .usbAudio, .carAudio, .airPlay:
+            return true
+        default:
+            return false
+        }
+    }
+
+    nonisolated private static var privateListeningRouteConnected: Bool {
+        AVAudioSession.sharedInstance().currentRoute.outputs.contains { pausesOnRouteLoss($0.portType) }
     }
 }

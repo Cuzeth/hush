@@ -178,6 +178,20 @@ final class PlayerViewModel {
             self?.cyclePreset(forward: false)
         }
 
+        // Remote transport goes through play()/stop() so the current mix is
+        // re-applied and UI state follows.
+        engine.onRemotePlay = { [weak self] in
+            self?.play()
+        }
+
+        engine.onRemotePause = { [weak self] in
+            self?.stop()
+        }
+
+        engine.onRemoteTogglePlayback = { [weak self] in
+            self?.togglePlayback()
+        }
+
         engine.onError = { [weak self] message in
             self?.errorMessage = message
         }
@@ -548,17 +562,11 @@ final class PlayerViewModel {
     }
 
     private func applyCurrentSources() {
-        engine.removeAllSources()
+        // Diff, not remove-all + re-add: sources that stay keep their nodes
+        // (no hard-detach click on a quick pause → play, no re-decode).
         // Defensive cap: addSource guards the UI path, but persisted or
         // tampered payloads assign activeSources directly.
-        for source in activeSources.prefix(AudioConstants.maxSimultaneousSources) {
-            engine.addSource(id: source.id, type: source.type, volume: source.volume,
-                           binauralRange: source.binauralRange,
-                           binauralFrequency: source.binauralFrequency,
-                           toneFrequency: source.toneFrequency,
-                           assetID: source.assetID,
-                           maskingStrength: source.maskingStrength)
-        }
+        engine.syncSources(Array(activeSources.prefix(AudioConstants.maxSimultaneousSources)))
     }
 
     // MARK: - Timer
