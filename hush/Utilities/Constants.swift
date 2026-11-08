@@ -6,6 +6,10 @@ enum AudioConstants {
     nonisolated static let defaultBinauralCarrier: Float = 200
     nonisolated static let timerFadeOutDuration: TimeInterval = 10.0
     nonisolated static let maxSimultaneousSources = 6
+    /// Volume a layer starts at when the user adds it from the mixer. One
+    /// value for every add path — samples used to come in at 1.0 while
+    /// generators came in at 0.5, so a recorded sound swamped the mix.
+    nonisolated static let defaultSourceVolume: Float = 0.5
     nonisolated static let crossfadeDurationMs: Double = 100.0
     nonisolated static let preferredIOBufferFrameCount: Double = 2048.0
     /// Ceiling on the transient memory a single sample decode may allocate

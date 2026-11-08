@@ -152,6 +152,62 @@ struct Preset: Identifiable, Codable {
     ]
 }
 
+// MARK: - Resolved Scene List
+
+extension Preset {
+    /// The scene list as the user sees it, in display order: built-in slots
+    /// first (an edited built-in's SavedPreset replaces it in place, even if
+    /// the stock version is hidden; an unedited one is skipped when hidden
+    /// and otherwise takes its rename), then user-created presets.
+    ///
+    /// Mirrors `PresetSelector.orderedPresets` so remote next/previous walks
+    /// the same list the selector shows. `saved` must already be in display
+    /// order (newest first, as the selector's `@Query` sorts). Duplicate
+    /// `stableID`s resolve to the first occurrence instead of trapping.
+    ///
+    /// - Parameters:
+    ///   - hiddenIDs: decoded from `PrefsKey.hiddenBuiltInPresets`.
+    ///   - renames: decoded from `PrefsKey.renamedBuiltInPresets`.
+    static func resolvedSceneList(
+        saved: [SavedPreset],
+        hiddenIDs: Set<UUID>,
+        renames: [UUID: String]
+    ) -> [Preset] {
+        let builtInIDs = Set(builtIn.map(\.id))
+        let savedByID = Dictionary(saved.map { ($0.stableID, $0) }, uniquingKeysWith: { first, _ in first })
+        var result: [Preset] = []
+
+        for preset in builtIn {
+            if let override = savedByID[preset.id] {
+                result.append(override.toPreset())
+            } else if !hiddenIDs.contains(preset.id) {
+                var renamed = preset
+                if let name = renames[preset.id] { renamed.name = name }
+                result.append(renamed)
+            }
+        }
+
+        var seenUserIDs = Set<UUID>()
+        for preset in saved where !builtInIDs.contains(preset.stableID) {
+            guard seenUserIDs.insert(preset.stableID).inserted else { continue }
+            result.append(preset.toPreset())
+        }
+        return result
+    }
+
+    /// Hidden built-in IDs as `PresetSelector` stores them (JSON `Set<UUID>`).
+    static func hiddenBuiltInIDs(in defaults: UserDefaults = .standard) -> Set<UUID> {
+        guard let data = defaults.data(forKey: PrefsKey.hiddenBuiltInPresets) else { return [] }
+        return (try? JSONDecoder().decode(Set<UUID>.self, from: data)) ?? []
+    }
+
+    /// Built-in renames as `PresetSelector` stores them (JSON `[UUID: String]`).
+    static func renamedBuiltIns(in defaults: UserDefaults = .standard) -> [UUID: String] {
+        guard let data = defaults.data(forKey: PrefsKey.renamedBuiltInPresets) else { return [:] }
+        return (try? JSONDecoder().decode([UUID: String].self, from: data)) ?? [:]
+    }
+}
+
 // SwiftData model for user-saved presets
 @Model
 final class SavedPreset {
@@ -178,10 +234,15 @@ final class SavedPreset {
                 return cached
             }
             do {
-                let decoded = try JSONDecoder().decode([SoundSource].self, from: sourcesData)
-                _cachedSources = decoded
+                // Lossy: one undecodable layer drops that layer, not the
+                // whole preset (which an edit would then save back empty).
+                let decoded = try JSONDecoder().decode(LossyDecodableArray<SoundSource>.self, from: sourcesData)
+                if decoded.skippedCount > 0 {
+                    presetLogger.error("SavedPreset dropped \(decoded.skippedCount) undecodable source(s)")
+                }
+                _cachedSources = decoded.elements
                 _cachedSourcesData = sourcesData
-                return decoded
+                return decoded.elements
             } catch {
                 // Deliberately NOT cached: the raw blob may be the only copy
                 // of the user's mix (e.g. written by a newer app version).

@@ -5,6 +5,7 @@ import UIKit
 struct ContentView: View {
     @State private var viewModel = PlayerViewModel()
     @Environment(UserSoundLibrary.self) private var userSoundLibrary
+    @Environment(\.modelContext) private var modelContext
     /// Optional so `#Preview` and any other host that doesn't run the launch
     /// sequence can still mount this view.
     @Environment(LaunchCoordinator.self) private var launchCoordinator: LaunchCoordinator?
@@ -42,6 +43,9 @@ struct ContentView: View {
         .onAppear {
             AudioEngine.shared.configureAudioSession()
             viewModel.bindUserSoundLibrary(userSoundLibrary)
+            // SavedPresets for remote next/previous and session restore —
+            // the same main context the selector's @Query reads.
+            viewModel.bindModelContext(modelContext)
             if let storageFailureMessage, !storageFailureSurfaced {
                 viewModel.storageFailureMessage = storageFailureMessage
                 storageFailureSurfaced = true
