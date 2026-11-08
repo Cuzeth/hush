@@ -280,7 +280,9 @@ struct PlayerView: View {
             // The old shape (onTapGesture + .isButton + label on a container
             // that also held the save button) risked VoiceOver exposing one
             // "Show mixer" element and hiding Save entirely.
-            HStack(spacing: 10) {
+            // The whole row toggles — chevron and panel padding included.
+            // Only Save, at the trailing end, is its own target.
+            HStack(spacing: 0) {
                 Button {
                     if reduceMotion {
                         viewModel.showMixer.toggle()
@@ -290,16 +292,23 @@ struct PlayerView: View {
                         }
                     }
                 } label: {
-                    HStack {
+                    HStack(spacing: 8) {
                         Text("Customize")
                             .font(.headline)
                             .foregroundStyle(HushPalette.textPrimary)
+                        Image(systemName: "chevron.down")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(HushPalette.textSecondary)
+                            .rotationEffect(.degrees(viewModel.showMixer ? -180 : 0))
+                            .accessibilityHidden(true)
                         Spacer(minLength: 0)
                     }
-                    .padding(.vertical, 14)
+                    .padding(.leading, 20)
+                    .padding(.trailing, 8)
+                    .frame(minHeight: 52)
                     .contentShape(Rectangle())
                 }
-                .buttonStyle(HushRowButtonStyle())
+                .buttonStyle(HushPressButtonStyle())
                 // Keep the visible "Customize" name (Voice Control matches on
                 // it); the state goes in the value.
                 .accessibilityValue(viewModel.showMixer ? "Expanded" : "Collapsed")
@@ -331,21 +340,23 @@ struct PlayerView: View {
                         .accessibilityLabel("Save current mix as preset")
                     }
                 }
-
-                Image(systemName: viewModel.showMixer ? "chevron.up" : "chevron.down")
-                    .font(.caption.weight(.bold))
-                    .foregroundStyle(HushPalette.textSecondary)
-                    .accessibilityHidden(true)
             }
-            .padding(.horizontal, 20)
+            .padding(.trailing, 8)
 
             if viewModel.showMixer {
                 MixerView(viewModel: viewModel)
                     .padding(.horizontal, 8)
                     .padding(.bottom, 12)
-                    .transition(reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
+                    // Unfolds from under the header row. The old
+                    // .move(edge: .bottom) slid the whole mixer up from
+                    // below the panel, across the scene list.
+                    .transition(reduceMotion
+                                ? .opacity
+                                : .opacity.combined(with: .offset(y: -12)))
             }
         }
+        // Content entering or leaving stays inside the panel's edge.
+        .clipShape(RoundedRectangle(cornerRadius: HushRadius.lg, style: .continuous))
         .hushPanel(fill: HushPalette.panelFillSoft)
     }
 
