@@ -4,7 +4,7 @@ import Foundation
 /// decode instead of failing the whole array. Persisted mixes (the last
 /// session, saved presets) are arrays of `SoundSource`; one element written
 /// by a newer build or damaged on disk used to throw away every layer.
-struct LossyDecodableArray<Element: Decodable>: Decodable {
+nonisolated struct LossyDecodableArray<Element: Decodable>: Decodable {
     var elements: [Element]
     /// How many elements were dropped, so callers can log the loss.
     var skippedCount: Int

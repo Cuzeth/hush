@@ -160,7 +160,7 @@ extension Preset {
     /// the stock version is hidden; an unedited one is skipped when hidden
     /// and otherwise takes its rename), then user-created presets.
     ///
-    /// Mirrors `PresetSelector.orderedPresets` so remote next/previous walks
+    /// Same ordering as the scene list (`SceneOrdering`), so remote next/previous walks
     /// the same list the selector shows. `saved` must already be in display
     /// order (newest first, as the selector's `@Query` sorts). Duplicate
     /// `stableID`s resolve to the first occurrence instead of trapping.
@@ -173,38 +173,23 @@ extension Preset {
         hiddenIDs: Set<UUID>,
         renames: [UUID: String]
     ) -> [Preset] {
-        let builtInIDs = Set(builtIn.map(\.id))
-        let savedByID = Dictionary(saved.map { ($0.stableID, $0) }, uniquingKeysWith: { first, _ in first })
-        var result: [Preset] = []
-
-        for preset in builtIn {
-            if let override = savedByID[preset.id] {
-                result.append(override.toPreset())
-            } else if !hiddenIDs.contains(preset.id) {
-                var renamed = preset
-                if let name = renames[preset.id] { renamed.name = name }
-                result.append(renamed)
-            }
-        }
-
-        var seenUserIDs = Set<UUID>()
-        for preset in saved where !builtInIDs.contains(preset.stableID) {
-            guard seenUserIDs.insert(preset.stableID).inserted else { continue }
-            result.append(preset.toPreset())
-        }
-        return result
+        SceneOrdering.ordered(
+            saved: saved,
+            stableID: \.stableID,
+            toPreset: { $0.toPreset() },
+            hidden: hiddenIDs,
+            renamed: renames
+        ).map(\.preset)
     }
 
     /// Hidden built-in IDs as `PresetSelector` stores them (JSON `Set<UUID>`).
     static func hiddenBuiltInIDs(in defaults: UserDefaults = .standard) -> Set<UUID> {
-        guard let data = defaults.data(forKey: PrefsKey.hiddenBuiltInPresets) else { return [] }
-        return (try? JSONDecoder().decode(Set<UUID>.self, from: data)) ?? []
+        BuiltInSceneStore.hidden(in: defaults)
     }
 
     /// Built-in renames as `PresetSelector` stores them (JSON `[UUID: String]`).
     static func renamedBuiltIns(in defaults: UserDefaults = .standard) -> [UUID: String] {
-        guard let data = defaults.data(forKey: PrefsKey.renamedBuiltInPresets) else { return [:] }
-        return (try? JSONDecoder().decode([UUID: String].self, from: data)) ?? [:]
+        BuiltInSceneStore.renamed(in: defaults)
     }
 }
 
@@ -233,16 +218,33 @@ final class SavedPreset {
             if _cachedSourcesData == sourcesData, let cached = _cachedSources {
                 return cached
             }
-            do {
-                // Lossy: one undecodable layer drops that layer, not the
-                // whole preset (which an edit would then save back empty).
-                let decoded = try JSONDecoder().decode(LossyDecodableArray<SoundSource>.self, from: sourcesData)
-                if decoded.skippedCount > 0 {
-                    presetLogger.error("SavedPreset dropped \(decoded.skippedCount) undecodable source(s)")
-                }
-                _cachedSources = decoded.elements
+            let decoder = JSONDecoder()
+            if let all = try? decoder.decode([SoundSource].self, from: sourcesData) {
+                _cachedSources = all
                 _cachedSourcesData = sourcesData
-                return decoded.elements
+                return all
+            }
+            do {
+                // Lossy fallback: one undecodable layer drops that layer, not
+                // the whole preset (which an edit would then save back empty).
+                // Element-by-element via JSONSerialization rather than the
+                // generic LossyDecodableArray: @Model accessors are
+                // nonisolated, and SoundSource's Codable conformance is
+                // main-actor isolated under default MainActor isolation.
+                guard let raw = try JSONSerialization.jsonObject(with: sourcesData) as? [Any] else {
+                    throw DecodingError.typeMismatch([Any].self, .init(codingPath: [], debugDescription: "Sources payload is not an array"))
+                }
+                // Each element is decoded as a one-element array: the
+                // `[SoundSource]` path passes the isolation check here, a bare
+                // `SoundSource.self` decode does not.
+                let elements = raw.compactMap { element -> SoundSource? in
+                    guard let data = try? JSONSerialization.data(withJSONObject: [element]) else { return nil }
+                    return (try? decoder.decode([SoundSource].self, from: data))?.first
+                }
+                presetLogger.error("SavedPreset dropped \(raw.count - elements.count) undecodable source(s)")
+                _cachedSources = elements
+                _cachedSourcesData = sourcesData
+                return elements
             } catch {
                 // Deliberately NOT cached: the raw blob may be the only copy
                 // of the user's mix (e.g. written by a newer app version).

@@ -479,14 +479,12 @@ struct PlayerView: View {
         let saved = (try? modelContext.fetch(
             FetchDescriptor<SavedPreset>(sortBy: [SortDescriptor(\.createdAt, order: .reverse)])
         )) ?? []
-        let scenes = SceneOrdering.ordered(
+        let scenes = Preset.resolvedSceneList(
             saved: saved,
-            stableID: \.stableID,
-            toPreset: { $0.toPreset() },
-            hidden: BuiltInSceneStore.hidden(),
-            renamed: BuiltInSceneStore.renamed()
+            hiddenIDs: Preset.hiddenBuiltInIDs(),
+            renames: Preset.renamedBuiltIns()
         )
-        guard let first = scenes.first?.preset else { return }
+        guard let first = scenes.first else { return }
         viewModel.loadPreset(first)
     }
 
