@@ -771,7 +771,7 @@ final class PlayerViewModel {
         engine.currentPresetName = currentPreset?.name ?? "Custom Mix"
         engine.currentPresetIcon = currentPreset?.icon
         engine.start()
-        withAnimation(HushMotion.slow) {
+        withAnimation(HushMotion.standard) {
             isPlaying = true
         }
         applyTimerFadeIfNeeded()
@@ -779,7 +779,7 @@ final class PlayerViewModel {
 
     func stop() {
         engine.stop()
-        withAnimation(HushMotion.slow) {
+        withAnimation(HushMotion.standard) {
             isPlaying = false
         }
     }

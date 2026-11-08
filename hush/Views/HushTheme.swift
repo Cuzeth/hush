@@ -149,13 +149,17 @@ enum HushRadius {
     static let lg: CGFloat = 24   // hero surfaces, large containers
 }
 
-/// Motion scale. `quick` for press feedback, `standard` for most transitions,
-/// `slow` for preset/scene changes. Use `Animation.linear(duration:)` only for
-/// continuous progress (e.g. timer ring), never for discrete transitions.
+/// Motion scale. `quick` for press feedback, `standard` for most state
+/// changes, `sceneSwap` for replacing the whole mix, `slow` for things that
+/// should settle gently (banners, saves). Springs, not ease-in-out curves:
+/// they start moving on the first frame, so a tap reads as answered
+/// instead of lagging behind a slow ramp-up. Use `Animation.linear` only
+/// for continuous progress (e.g. timer ring), never for discrete changes.
 enum HushMotion {
-    static let quick = Animation.easeOut(duration: 0.15)
-    static let standard = Animation.easeInOut(duration: 0.25)
-    static let slow = Animation.easeInOut(duration: 0.4)
+    static let quick = Animation.easeOut(duration: 0.12)
+    static let standard = Animation.snappy(duration: 0.28)
+    static let sceneSwap = Animation.snappy(duration: 0.32)
+    static let slow = Animation.smooth(duration: 0.4)
 }
 
 /// Single, flat backdrop. No dot grid, no radial glow, no mask gradient —
