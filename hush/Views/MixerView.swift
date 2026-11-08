@@ -287,15 +287,20 @@ struct SoundPickerGrid: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.horizontalSizeClass) private var sizeClass
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(UserSoundLibrary.self) private var library
     @State private var expandedCategories: Set<SoundCategory> = []
     @State private var showFileImporter = false
     @State private var pendingImportURL: ImportURL?
     @State private var importerError: String?
     @State private var searchQuery = ""
+    @State private var preview = SoundPreviewPlayer()
+    @State private var recents = RecentSounds()
 
     private var columns: [GridItem] {
-        let count = sizeClass == .regular ? 3 : 2
+        // One column at accessibility sizes: two cards side by side on a
+        // 375pt phone left titles a word or two per line.
+        let count = dynamicTypeSize.isAccessibilitySize ? 1 : (sizeClass == .regular ? 3 : 2)
         return Array(repeating: GridItem(.flexible(), spacing: 14), count: count)
     }
 
@@ -327,6 +332,14 @@ struct SoundPickerGrid: View {
         library.allSoundAssets.filter { !activeAssetIDs.contains($0.id) }
     }
 
+    /// Recent entries that still resolve and aren't in the mix. Reads user
+    /// imports through the environment library so the row follows deletes.
+    private var visibleRecents: [PickerSound] {
+        recents.visible(excluding: activeSources) { id in
+            library.asset(withID: id) ?? SoundAssetRegistry.asset(withID: id)
+        }
+    }
+
     var body: some View {
         NavigationStack {
             ZStack {
@@ -339,6 +352,8 @@ struct SoundPickerGrid: View {
                             // already-expanded grid.
                             searchResultsSection
                         } else {
+                            recentSection
+
                             mySoundsSection
 
                             // Generated section
@@ -359,6 +374,9 @@ struct SoundPickerGrid: View {
                     .padding(.bottom, 28)
                 }
                 .scrollDismissesKeyboard(.immediately)
+                .sensoryFeedback(.impact(weight: .light), trigger: preview.previewingID) { _, new in
+                    new != nil
+                }
 
                 if let importerError {
                     VStack {
@@ -401,8 +419,11 @@ struct SoundPickerGrid: View {
             )
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Done") { dismiss() }
-                        .foregroundStyle(HushPalette.textPrimary)
+                    Button("Done") {
+                        preview.stop()
+                        dismiss()
+                    }
+                    .foregroundStyle(HushPalette.textPrimary)
                 }
             }
             .fileImporter(
@@ -422,13 +443,134 @@ struct SoundPickerGrid: View {
                     // Auto-add the freshly imported sound and dismiss the
                     // picker — user shouldn't have to find it in the list.
                     if let resolved = library.asset(withID: newAsset.assetID) {
-                        onSelectAsset(resolved)
-                        dismiss()
+                        add(.asset(resolved))
                     }
                 }
             }
+            // Swipe-down and the add paths all end here; the explicit stops
+            // above just make Done and adding cut the preview immediately.
+            .onDisappear { preview.stop() }
         }
         .tint(HushPalette.accentSoft)
+    }
+
+    // MARK: - Cards
+
+    /// Every card in the picker, so Recent, My Sounds, search results and
+    /// the category grids share one add path, one preview path and one look.
+    @ViewBuilder
+    private func card(_ sound: PickerSound, tag: String) -> some View {
+        let isMissing = isMissingImport(sound)
+        let previewAsset: SoundAsset? = {
+            guard case .asset(let asset) = sound, !isMissing else { return nil }
+            return asset
+        }()
+        let isPreviewing = previewAsset != nil && preview.previewingID == sound.id
+
+        let button = Button { add(sound) } label: {
+            SoundCardLabel(
+                icon: sound.icon,
+                title: sound.title,
+                tag: tag,
+                isPreviewing: isPreviewing,
+                isMissing: isMissing
+            )
+        }
+        .accessibilityLabel(sound.title)
+        .accessibilityValue(isPreviewing ? "Previewing" : (isMissing ? "File missing" : tag))
+
+        if let previewAsset {
+            button
+                .buttonStyle(SoundCardButtonStyle { togglePreview(previewAsset) })
+                .accessibilityAction(named: isPreviewing ? "Stop preview" : "Preview") {
+                    togglePreview(previewAsset)
+                }
+        } else {
+            // Generated sounds and missing imports: no preview, plain button.
+            button.buttonStyle(HushPressButtonStyle())
+        }
+    }
+
+    private func add(_ sound: PickerSound) {
+        Self.add(sound, preview: preview, recents: recents,
+                 onSelect: onSelect, onSelectAsset: onSelectAsset)
+        dismiss()
+    }
+
+    private func togglePreview(_ asset: SoundAsset) {
+        let announcement: String
+        switch preview.toggle(asset) {
+        case .started: announcement = "Previewing \(asset.displayName)"
+        case .stopped: announcement = "Preview stopped"
+        case .unavailable: announcement = "No preview for \(asset.displayName)"
+        }
+        AccessibilityNotification.Announcement(announcement).post()
+    }
+
+    /// A user import whose file is gone. Same test as the mixer row (the
+    /// library's flag), plus a live check for files removed since `verify()`.
+    private func isMissingImport(_ sound: PickerSound) -> Bool {
+        guard case .asset(let asset) = sound, asset.isUserImported else { return false }
+        if let uuid = UserSoundAsset.uuid(fromAssetID: asset.id),
+           library.assetsByID[uuid]?.isMissing == true {
+            return true
+        }
+        return asset.resolvedURL == nil
+    }
+
+    // MARK: - Recent
+
+    @ViewBuilder private var recentSection: some View {
+        let sounds = visibleRecents
+        if !sounds.isEmpty {
+            VStack(alignment: .leading, spacing: 14) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Recent")
+                        .font(.title3.weight(.semibold))
+                        .foregroundStyle(HushPalette.textPrimary)
+                        .accessibilityAddTraits(.isHeader)
+
+                    Text("Sounds you've added lately")
+                        .font(.subheadline)
+                        .foregroundStyle(HushPalette.textSecondary)
+                }
+
+                // A swipeable row rather than a grid, so up to 8 recents
+                // don't push the rest of the picker below the medium detent.
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(alignment: .top, spacing: 14) {
+                        ForEach(sounds) { sound in
+                            card(sound, tag: recentTag(for: sound))
+                                .containerRelativeFrame(.horizontal) { length, _ in
+                                    recentCardWidth(in: length)
+                                }
+                        }
+                    }
+                    .scrollTargetLayout()
+                }
+                .scrollTargetBehavior(.viewAligned)
+                // Bleed to the sheet edges while the first card stays
+                // aligned with the section title.
+                .contentMargins(.horizontal, 20, for: .scrollContent)
+                .padding(.horizontal, -20)
+            }
+        }
+    }
+
+    /// The tag the card carries in its home section; bundled sounds show
+    /// their category since the row mixes categories.
+    private func recentTag(for sound: PickerSound) -> String {
+        switch sound {
+        case .generated: return "Generated"
+        case .asset(let asset): return asset.isUserImported ? "Imported" : asset.category.rawValue
+        }
+    }
+
+    /// Cards sized like the grid's, with the next one peeking in so the
+    /// row reads as scrollable.
+    private func recentCardWidth(in length: CGFloat) -> CGFloat {
+        let visible: CGFloat = dynamicTypeSize.isAccessibilitySize ? 1.15 : (sizeClass == .regular ? 3.3 : 2.2)
+        return (length - 14 * visible.rounded(.down)) / visible
     }
 
     // MARK: - My Sounds (user imports)
@@ -446,7 +588,10 @@ struct SoundPickerGrid: View {
             }
 
             LazyVGrid(columns: columns, spacing: 14) {
-                Button { showFileImporter = true } label: {
+                Button {
+                    preview.stop()
+                    showFileImporter = true
+                } label: {
                     SoundCardLabel(
                         icon: "plus",
                         iconTint: HushPalette.accentSoft,
@@ -458,17 +603,7 @@ struct SoundPickerGrid: View {
                 .buttonStyle(HushPressButtonStyle())
 
                 ForEach(availableUserAssets) { asset in
-                    Button {
-                        onSelectAsset(asset)
-                        dismiss()
-                    } label: {
-                        SoundCardLabel(
-                            icon: asset.icon,
-                            title: asset.displayName,
-                            tag: "Imported"
-                        )
-                    }
-                    .buttonStyle(HushPressButtonStyle())
+                    card(.asset(asset), tag: "Imported")
                 }
             }
         }
@@ -503,33 +638,15 @@ struct SoundPickerGrid: View {
             if total > 0 {
                 LazyVGrid(columns: columns, spacing: 14) {
                     ForEach(userMatches) { asset in
-                        Button {
-                            onSelectAsset(asset)
-                            dismiss()
-                        } label: {
-                            SoundCardLabel(icon: asset.icon, title: asset.displayName, tag: "Imported")
-                        }
-                        .buttonStyle(HushPressButtonStyle())
+                        card(.asset(asset), tag: "Imported")
                     }
 
                     ForEach(generatedMatches) { type in
-                        Button {
-                            onSelect(type)
-                            dismiss()
-                        } label: {
-                            SoundCardLabel(icon: type.icon, title: type.rawValue, tag: "Generated")
-                        }
-                        .buttonStyle(HushPressButtonStyle())
+                        card(.generated(type), tag: "Generated")
                     }
 
                     ForEach(recordedMatches) { asset in
-                        Button {
-                            onSelectAsset(asset)
-                            dismiss()
-                        } label: {
-                            SoundCardLabel(icon: asset.icon, title: asset.displayName, tag: asset.category.rawValue)
-                        }
-                        .buttonStyle(HushPressButtonStyle())
+                        card(.asset(asset), tag: asset.category.rawValue)
                     }
                 }
             }
@@ -599,17 +716,7 @@ struct SoundPickerGrid: View {
             if isExpanded {
                 LazyVGrid(columns: columns, spacing: 14) {
                     ForEach(assets) { asset in
-                        Button {
-                            onSelectAsset(asset)
-                            dismiss()
-                        } label: {
-                            SoundCardLabel(
-                                icon: asset.icon,
-                                title: asset.displayName,
-                                tag: "Recorded"
-                            )
-                        }
-                        .buttonStyle(HushPressButtonStyle())
+                        card(.asset(asset), tag: "Recorded")
                     }
                 }
             }
@@ -631,19 +738,29 @@ struct SoundPickerGrid: View {
 
             LazyVGrid(columns: columns, spacing: 14) {
                 ForEach(sounds) { type in
-                    Button {
-                        onSelect(type)
-                        dismiss()
-                    } label: {
-                        SoundCardLabel(
-                            icon: type.icon,
-                            title: type.rawValue,
-                            tag: "Generated"
-                        )
-                    }
-                    .buttonStyle(HushPressButtonStyle())
+                    card(.generated(type), tag: "Generated")
                 }
             }
+        }
+    }
+}
+
+extension SoundPickerGrid {
+    /// The one add path behind every card: end the preview, remember the
+    /// sound for the Recent row, hand it to the caller. Static so tests can
+    /// drive it without a view.
+    static func add(
+        _ sound: PickerSound,
+        preview: SoundPreviewPlayer,
+        recents: RecentSounds,
+        onSelect: (SoundType) -> Void,
+        onSelectAsset: (SoundAsset) -> Void
+    ) {
+        preview.stop()
+        recents.record(sound)
+        switch sound {
+        case .generated(let type): onSelect(type)
+        case .asset(let asset): onSelectAsset(asset)
         }
     }
 }
@@ -657,6 +774,15 @@ private struct SoundCardLabel: View {
     var iconDashed: Bool = false
     let title: String
     let tag: String
+    /// Long-press preview playing: animated waveform, "Previewing" tag and
+    /// an accent outline, so it never relies on motion or color alone.
+    var isPreviewing = false
+    /// User import whose file is gone — same danger treatment as the
+    /// mixer row's "Missing — tap to relink".
+    var isMissing = false
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ScaledMetric(relativeTo: .headline) private var iconSize: CGFloat = 42
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -664,16 +790,23 @@ private struct SoundCardLabel: View {
                 if iconDashed {
                     Circle()
                         .strokeBorder(HushPalette.outline, style: StrokeStyle(lineWidth: 1, dash: [4, 4]))
-                        .frame(width: 42, height: 42)
                 } else {
                     Circle()
-                        .fill(HushPalette.raisedFill)
-                        .frame(width: 42, height: 42)
+                        .fill(isPreviewing ? HushPalette.chipActive : HushPalette.raisedFill)
                 }
-                Image(systemName: icon)
+                Image(systemName: isPreviewing ? "waveform" : icon)
                     .font(.headline)
-                    .foregroundStyle(iconTint)
+                    .foregroundStyle(iconColor)
+                    // Static under Reduce Motion; the tag still says so.
+                    .symbolEffect(
+                        .variableColor.iterative.dimInactiveLayers,
+                        options: .repeating,
+                        isActive: isPreviewing && !reduceMotion
+                    )
+                    .contentTransition(reduceMotion ? .identity : .symbolEffect(.replace))
             }
+            .frame(width: iconSize, height: iconSize)
+            .accessibilityHidden(true)
 
             Text(title)
                 .font(.headline)
@@ -681,13 +814,38 @@ private struct SoundCardLabel: View {
                 .multilineTextAlignment(.leading)
                 .lineLimit(2)
 
-            Text(tag)
-                .font(.caption)
-                .foregroundStyle(HushPalette.textSecondary)
+            if isPreviewing {
+                Text("Previewing")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(HushPalette.accentSoft)
+            } else if isMissing {
+                HStack(spacing: 4) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                    Text("Missing file")
+                }
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(HushPalette.danger)
+            } else {
+                Text(tag)
+                    .font(.caption)
+                    .foregroundStyle(HushPalette.textSecondary)
+            }
         }
         .frame(maxWidth: .infinity, minHeight: 142, alignment: .leading)
         .padding(16)
         .hushPanel(radius: HushRadius.lg)
+        .overlay(
+            RoundedRectangle(cornerRadius: HushRadius.lg, style: .continuous)
+                .strokeBorder(HushPalette.accentSoft, lineWidth: 1.5)
+                .opacity(isPreviewing ? 1 : 0)
+        )
+        .animation(reduceMotion ? nil : HushMotion.quick, value: isPreviewing)
+    }
+
+    private var iconColor: Color {
+        if isPreviewing { return HushPalette.accentSoft }
+        if isMissing { return HushPalette.danger }
+        return iconTint
     }
 }
 
