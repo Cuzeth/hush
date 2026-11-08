@@ -279,6 +279,9 @@ struct PresetSelector: View {
         .accessibilityAction(named: "Edit Sounds") { presetToEdit = preset }
         .accessibilityAction(named: "Rename") { beginRename(preset: preset, saved: saved) }
         .accessibilityAction(named: target.kind.actionTitle) { performAction(target) }
+        // Lift the row as the rounded card it is; without this the
+        // long-press preview was a sharp-cornered rectangle.
+        .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: HushRadius.sm, style: .continuous))
         .contextMenu {
             sceneActions(preset: preset, saved: saved, target: target)
         }
