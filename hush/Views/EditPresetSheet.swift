@@ -11,11 +11,17 @@ struct EditPresetSheet: View {
 
     @State private var sources: [SoundSource]
     @State private var showAddSound = false
+    @State private var showDiscardConfirmation = false
 
     init(preset: Preset, onSave: @escaping (Preset, [SoundSource]) -> Void) {
         self.preset = preset
         self.onSave = onSave
         _sources = State(initialValue: preset.sources)
+    }
+
+    /// Any edit at all: layers added, removed, or retuned.
+    private var hasChanges: Bool {
+        sources != preset.sources
     }
 
     var body: some View {
@@ -63,8 +69,24 @@ struct EditPresetSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
-                        .foregroundStyle(HushPalette.textSecondary)
+                    Button("Cancel") {
+                        if hasChanges {
+                            showDiscardConfirmation = true
+                        } else {
+                            dismiss()
+                        }
+                    }
+                    .foregroundStyle(HushPalette.textSecondary)
+                    .confirmationDialog(
+                        "Discard changes?",
+                        isPresented: $showDiscardConfirmation,
+                        titleVisibility: .visible
+                    ) {
+                        Button("Discard Changes", role: .destructive) { dismiss() }
+                        Button("Keep Editing", role: .cancel) {}
+                    } message: {
+                        Text("Your edits to \u{201C}\(preset.name)\u{201D} haven't been saved.")
+                    }
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
@@ -78,6 +100,8 @@ struct EditPresetSheet: View {
             }
         }
         .tint(HushPalette.accentSoft)
+        // Swipe-down would silently drop edits; Cancel asks first instead.
+        .interactiveDismissDisabled(hasChanges)
         .sheet(isPresented: $showAddSound) {
             SoundPickerGrid(activeSources: sources) { type in
                 var source = SoundSource(type: type, volume: 0.5)
@@ -175,7 +199,9 @@ private struct EditSourceRow: View {
                 .tint(HushPalette.accentSoft)
                 .accessibilityLabel("\(source.displayName) volume")
                 .accessibilityValue("\(Int(volume * 100)) percent")
+                .sensoryFeedback(.selection, trigger: Int(volume * 10))
                 .onChange(of: volume) {
+                    guard volume != source.volume else { return }
                     if let idx = sources.firstIndex(where: { $0.id == source.id }) {
                         sources[idx].volume = volume
                     }
@@ -201,6 +227,7 @@ private struct EditSourceRow: View {
             if source.type == .speechMasking {
                 MaskingStrengthSlider(strength: $maskingStrength)
                     .onChange(of: maskingStrength) {
+                        guard maskingStrength != (source.maskingStrength ?? 0.5) else { return }
                         if let idx = sources.firstIndex(where: { $0.id == source.id }) {
                             sources[idx].maskingStrength = maskingStrength
                         }
@@ -210,6 +237,15 @@ private struct EditSourceRow: View {
         .padding(18)
         .hushPanel(radius: HushRadius.lg)
         .accessibilityElement(children: .contain)
+        // Same seeding caveat as MixerView's SourceRow: keep the local
+        // slider state in step with the row's source.
+        .onChange(of: source.volume) { _, newValue in
+            if volume != newValue { volume = newValue }
+        }
+        .onChange(of: source.maskingStrength) { _, newValue in
+            let strength = newValue ?? 0.5
+            if maskingStrength != strength { maskingStrength = strength }
+        }
     }
 
     private var isBinauralType: Bool {

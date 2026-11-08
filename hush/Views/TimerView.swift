@@ -83,7 +83,7 @@ struct TimerView: View {
             .padding(.top, 4)
             .accessibilityElement(children: .combine)
             .accessibilityLabel("Timer")
-            .accessibilityValue("\(viewModel.timerState.displayTime) remaining")
+            .accessibilityValue(TimerSpeech.remaining(viewModel.timerState.remainingSeconds))
 
             if viewModel.timerState.playChimeOnEnd {
                 HushInfoPill(icon: "bell.fill", text: "Chime at end")
@@ -111,7 +111,7 @@ struct TimerView: View {
     private var durationPicker: some View {
         VStack(alignment: .leading, spacing: 28) {
             VStack(alignment: .leading, spacing: 4) {
-                Text("Sleep timer")
+                Text("Timer")
                     .font(.title3.weight(.semibold))
                     .foregroundStyle(HushPalette.textPrimary)
 
@@ -198,5 +198,25 @@ struct TimerView: View {
                 }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// Spoken form of the countdown. VoiceOver reads "24:59" as a clock time;
+/// this gives "24 minutes, 59 seconds remaining".
+enum TimerSpeech {
+    static func remaining(_ seconds: TimeInterval, locale: Locale = .current) -> String {
+        "\(duration(seconds, locale: locale)) remaining"
+    }
+
+    static func duration(_ seconds: TimeInterval, locale: Locale = .current) -> String {
+        let formatter = DateComponentsFormatter()
+        formatter.unitsStyle = .full
+        formatter.allowedUnits = [.hour, .minute, .second]
+        var calendar = Calendar.current
+        calendar.locale = locale
+        formatter.calendar = calendar
+        // Whole seconds, floored, to match the on-screen `displayTime`.
+        let whole = TimeInterval(Int(max(0, seconds)))
+        return formatter.string(from: whole) ?? "\(Int(whole)) seconds"
     }
 }
