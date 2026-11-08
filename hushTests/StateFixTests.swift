@@ -447,7 +447,7 @@ struct ResolvedSceneListTests {
     }
 
     @Test func defaultsMatchBuiltInOrder() {
-        let list = Preset.resolvedSceneList(saved: [], hiddenIDs: [], renames: [:])
+        let list = Preset.resolvedSceneList(saved: [], hiddenIDs: [], renames: [:], order: [])
         #expect(list.map(\.id) == Preset.builtIn.map(\.id))
     }
 
@@ -455,7 +455,7 @@ struct ResolvedSceneListTests {
         let focus = try builtIn("Focus")
         let sleep = try builtIn("Sleep")
 
-        let list = Preset.resolvedSceneList(saved: [], hiddenIDs: [focus.id], renames: [sleep.id: "Night"])
+        let list = Preset.resolvedSceneList(saved: [], hiddenIDs: [focus.id], renames: [sleep.id: "Night"], order: [])
 
         #expect(!list.contains { $0.id == focus.id })
         #expect(list.first { $0.id == sleep.id }?.name == "Night")
@@ -470,8 +470,7 @@ struct ResolvedSceneListTests {
         let list = Preset.resolvedSceneList(
             saved: [edited],
             hiddenIDs: [calm.id],
-            renames: [calm.id: "Ignored Rename"]
-        )
+            renames: [calm.id: "Ignored Rename"], order: [])
 
         let index = try #require(Preset.builtIn.firstIndex { $0.id == calm.id })
         #expect(list.count == Preset.builtIn.count, "Override replaces the slot, isn't appended")
@@ -485,7 +484,7 @@ struct ResolvedSceneListTests {
         let newer = SavedPreset(name: "Newer", icon: "star", sources: [])
         let older = SavedPreset(name: "Older", icon: "star", sources: [])
 
-        let list = Preset.resolvedSceneList(saved: [newer, older], hiddenIDs: [], renames: [:])
+        let list = Preset.resolvedSceneList(saved: [newer, older], hiddenIDs: [], renames: [:], order: [])
 
         #expect(list.count == Preset.builtIn.count + 2)
         #expect(list.suffix(2).map(\.id) == [newer.stableID, older.stableID])
@@ -504,8 +503,7 @@ struct ResolvedSceneListTests {
         let list = Preset.resolvedSceneList(
             saved: [firstOverride, secondOverride, user, userDuplicate],
             hiddenIDs: [],
-            renames: [:]
-        )
+            renames: [:], order: [])
 
         #expect(list.filter { $0.id == cozy.id }.map(\.name) == ["Cozy A"])
         #expect(list.filter { $0.id == user.stableID }.map(\.name) == ["Mine"])
@@ -518,7 +516,7 @@ struct ResolvedSceneListTests {
 @MainActor
 struct CyclePresetTests {
 
-    private static let prefsKeys = [PrefsKey.hiddenBuiltInPresets, PrefsKey.renamedBuiltInPresets]
+    private static let prefsKeys = [PrefsKey.hiddenBuiltInPresets, PrefsKey.renamedBuiltInPresets, PrefsKey.sceneOrder]
 
     @Test func cyclingWalksIntoAndOutOfUserPresets() throws {
         try preservingDefaults(Self.prefsKeys) {
