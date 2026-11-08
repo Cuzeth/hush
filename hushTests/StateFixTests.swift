@@ -200,7 +200,7 @@ struct MissingSetPruningTests {
     }
 
     @Test func restoringASessionPrunesMissingSet() throws {
-        try preservingDefaults([sessionKey]) {
+        preservingDefaults([sessionKey]) {
             let writer = PlayerViewModel()
             writer.activeSources = [SoundSource(type: .brownNoise, volume: 0.4)]
             writer.saveLastSession()
@@ -256,7 +256,7 @@ struct UserAssetRelinkTests {
 struct UserAssetDeletedTests {
 
     @Test func deletingRemovesLayersPrunesBannerAndSavesSession() throws {
-        try preservingDefaults([sessionKey]) {
+        preservingDefaults([sessionKey]) {
             let vm = PlayerViewModel()
             let doomed = SoundSource(type: .sampleAsset, volume: 0.5, assetID: "user.doomed")
             let brown = SoundSource(type: .brownNoise, volume: 0.4)
@@ -279,7 +279,7 @@ struct UserAssetDeletedTests {
     }
 
     @Test func deletingTheOnlyLayerStopsPlayback() throws {
-        try preservingDefaults([sessionKey]) {
+        preservingDefaults([sessionKey]) {
             let vm = PlayerViewModel()
             vm.activeSources = [SoundSource(type: .sampleAsset, volume: 0.5, assetID: "user.solo")]
             vm.isPlaying = true
@@ -298,7 +298,7 @@ struct UserAssetDeletedTests {
 struct PresetRenamedTests {
 
     @Test func renamingCurrentPresetUpdatesHeaderNowPlayingAndSession() throws {
-        try preservingDefaults([sessionKey]) {
+        preservingDefaults([sessionKey]) {
             let vm = PlayerViewModel()
             let preset = Preset(name: "Old Name", icon: "star",
                                 sources: [SoundSource(type: .brownNoise, volume: 0.4)], isBuiltIn: false)
@@ -659,7 +659,7 @@ struct DeletedImportFilteringTests {
 struct TimerChimeGatingTests {
 
     @Test func chimeOnlyPlaysWhileActive() throws {
-        try preservingDefaults([sessionKey, "timerPlayChimeOnEnd", "timerEndDate", "timerDuration"]) {
+        preservingDefaults([sessionKey, "timerPlayChimeOnEnd", "timerEndDate", "timerDuration"]) {
             let vm = PlayerViewModel()
             vm.timerState.playChimeOnEnd = true
             #expect(vm.shouldChimeOnTimerEnd(wasPlaying: true))
