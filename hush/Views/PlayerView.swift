@@ -166,7 +166,9 @@ struct PlayerView: View {
             // The mix up front: a level and a remove per layer. The
             // transport button's pause-state stays the canonical "are we
             // playing" indicator, so no separate Playing pill here.
-            if !viewModel.activeSources.isEmpty {
+            // Hidden while Customize is open: its full rows carry the same
+            // sliders, and two sets for one layer read as two layers.
+            if !viewModel.activeSources.isEmpty && !viewModel.showMixer {
                 LayerLevelStrip(viewModel: viewModel)
                     // Let the remove buttons' hit areas run into the panel
                     // padding, so the xmarks sit on the content edge.
