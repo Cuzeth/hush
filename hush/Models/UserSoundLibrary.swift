@@ -81,6 +81,13 @@ final class UserSoundLibrary {
     /// Wired to AudioEngine.invalidateCachedBuffer by HushApp; nil in tests.
     @ObservationIgnored var onAssetContentChanged: ((String) -> Void)?
 
+    /// Called when `importSound` relinks an existing missing record instead
+    /// of creating a new one (the user re-imported a file whose copy went
+    /// missing). The string is the record's asset ID, unchanged from before.
+    /// Wired by `PlayerViewModel.bindUserSoundLibrary` so active layers using
+    /// it come back; nil in tests.
+    @ObservationIgnored var onMissingAssetReimported: ((String) -> Void)?
+
     let maximumImportFileSizeBytes: Int64
     private let modelContext: ModelContext
     private let storageDirectory: URL
@@ -165,8 +172,25 @@ final class UserSoundLibrary {
         // up to 2 MB — enough to disambiguate audio files in practice without
         // re-reading large WAVs into memory.
         let hash = Self.hashFilePrefix(at: sourceURL)
-        if let hash, let existing = assetsByID.values.first(where: { $0.contentHash == hash }) {
-            throw UserSoundImportError.duplicate(existingDisplayName: existing.displayName)
+        if let hash {
+            let matches = assetsByID.values.filter { $0.contentHash == hash }
+            if let present = matches.first(where: { !isFileMissing($0) }) {
+                throw UserSoundImportError.duplicate(existingDisplayName: present.displayName)
+            }
+            // Every match lost its file: the user is bringing it back.
+            // Relink the existing record (same id, so presets and the
+            // active mix keep resolving) instead of refusing the import.
+            if let missing = matches.max(by: { $0.dateImported < $1.dateImported }) {
+                return try relinkReimported(
+                    missing,
+                    to: sourceURL,
+                    displayName: displayName,
+                    category: category,
+                    crossfadeEnabled: crossfadeEnabled,
+                    crossfadeDurationMs: crossfadeDurationMs,
+                    iconOverride: iconOverride
+                )
+            }
         }
 
         // Copy into storage with a UUID-stable name, preserving extension.
@@ -225,6 +249,38 @@ final class UserSoundLibrary {
         return record
     }
 
+    /// Import path for a file whose earlier copy went missing: relinks the
+    /// existing record, applies the options the user just picked in the
+    /// import sheet, and notifies `onMissingAssetReimported`.
+    private func relinkReimported(
+        _ record: UserSoundAsset,
+        to sourceURL: URL,
+        displayName: String,
+        category: SoundCategory,
+        crossfadeEnabled: Bool,
+        crossfadeDurationMs: Int,
+        iconOverride: String?
+    ) throws -> UserSoundAsset {
+        try relink(record, to: sourceURL)
+        let trimmedName = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        update(record) { rec in
+            if !trimmedName.isEmpty { rec.displayName = trimmedName }
+            rec.category = category
+            rec.crossfadeEnabled = crossfadeEnabled
+            rec.crossfadeDurationMs = crossfadeDurationMs
+            rec.iconOverride = iconOverride
+        }
+        Self.logger.info("Re-import relinked missing user sound [\(record.assetID)]")
+        onMissingAssetReimported?(record.assetID)
+        return record
+    }
+
+    /// A record counts as missing if `verify()` flagged it or its file has
+    /// vanished since the last verify pass.
+    private func isFileMissing(_ record: UserSoundAsset) -> Bool {
+        record.isMissing || !FileManager.default.fileExists(atPath: url(for: record).path)
+    }
+
     // MARK: - Mutation
 
     func update(_ asset: UserSoundAsset, mutate: (UserSoundAsset) -> Void) {
@@ -273,24 +329,39 @@ final class UserSoundLibrary {
         let format = probe.file.processingFormat
 
         let ext = sourceURL.pathExtension.isEmpty ? "audio" : sourceURL.pathExtension
-        let newFileName = "\(asset.id.uuidString).\(ext)"
-        let destination = storageDirectory.appendingPathComponent(newFileName)
-
-        // Remove any prior file (could be a different extension).
+        let destination = storageDirectory.appendingPathComponent("\(asset.id.uuidString).\(ext)")
         let oldURL = url(for: asset)
-        if FileManager.default.fileExists(atPath: oldURL.path) {
-            try? FileManager.default.removeItem(at: oldURL)
-        }
+        let fileManager = FileManager.default
 
+        // Copy to a temp name first, then swap it in. Deleting the old file
+        // before the copy meant a failed copy left the record pointing at
+        // nothing.
+        let tempURL = storageDirectory.appendingPathComponent(".relink-\(UUID().uuidString).\(ext)")
+        let finalURL: URL
         do {
-            try FileManager.default.copyItem(at: sourceURL, to: destination)
+            try fileManager.copyItem(at: sourceURL, to: tempURL)
+            if fileManager.fileExists(atPath: destination.path) {
+                finalURL = try fileManager.replaceItemAt(destination, withItemAt: tempURL) ?? destination
+            } else {
+                try fileManager.moveItem(at: tempURL, to: destination)
+                finalURL = destination
+            }
         } catch {
+            Self.logger.error("Relink copy failed: \(error.localizedDescription)")
+            try? fileManager.removeItem(at: tempURL)
             throw UserSoundImportError.copyFailed
         }
 
-        let size = (try? FileManager.default.attributesOfItem(atPath: destination.path)[.size] as? Int64) ?? 0
+        // The new file is in place; only now drop a prior file that had a
+        // different extension (same-extension files were replaced above).
+        if oldURL.standardizedFileURL != finalURL.standardizedFileURL,
+           fileManager.fileExists(atPath: oldURL.path) {
+            try? fileManager.removeItem(at: oldURL)
+        }
 
-        asset.fileName = newFileName
+        let size = (try? fileManager.attributesOfItem(atPath: finalURL.path)[.size] as? Int64) ?? 0
+
+        asset.fileName = finalURL.lastPathComponent
         asset.durationSeconds = probe.duration
         asset.originalSampleRate = format.sampleRate
         asset.channelCount = Int(format.channelCount)

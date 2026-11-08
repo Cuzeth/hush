@@ -62,3 +62,43 @@ struct SoundSource: Identifiable, Codable, Hashable {
         case id, type, volume, binauralRange, binauralFrequency, toneFrequency, assetID, maskingStrength
     }
 }
+
+extension SoundSource {
+    /// Slack for slider-driven values: a drag that lands back within this of
+    /// the preset's value still counts as unchanged.
+    static let layerMatchTolerance: Float = 0.01
+
+    /// Whether `other` produces the same layer: same sound and parameters,
+    /// volume within tolerance. Ignores `id` — built-in presets mint fresh
+    /// source UUIDs every launch, so a restored session never shares IDs
+    /// with the preset it came from.
+    func isSameLayer(as other: SoundSource, tolerance: Float = SoundSource.layerMatchTolerance) -> Bool {
+        func close(_ a: Float?, _ b: Float?) -> Bool {
+            switch (a, b) {
+            case (nil, nil): return true
+            case let (a?, b?): return abs(a - b) <= tolerance
+            default: return false
+            }
+        }
+        return type == other.type
+            && assetID == other.assetID
+            && binauralRange == other.binauralRange
+            && close(volume, other.volume)
+            && close(binauralFrequency, other.binauralFrequency)
+            && close(toneFrequency, other.toneFrequency)
+            && close(maskingStrength, other.maskingStrength)
+    }
+
+    /// Order-insensitive layer comparison of two mixes.
+    static func mixesMatch(_ lhs: [SoundSource], _ rhs: [SoundSource]) -> Bool {
+        guard lhs.count == rhs.count else { return false }
+        var unmatched = rhs
+        for source in lhs {
+            guard let index = unmatched.firstIndex(where: { source.isSameLayer(as: $0) }) else {
+                return false
+            }
+            unmatched.remove(at: index)
+        }
+        return true
+    }
+}
