@@ -1,9 +1,11 @@
 import SwiftUI
 import SwiftData
 import UIKit
+import AppIntents
 
 struct ContentView: View {
-    @State private var viewModel = PlayerViewModel()
+    /// Owned by HushApp so shortcuts can drive it with no window open.
+    let viewModel: PlayerViewModel
     @Environment(UserSoundLibrary.self) private var userSoundLibrary
     @Environment(\.modelContext) private var modelContext
     /// Optional so `#Preview` and any other host that doesn't run the launch
@@ -26,7 +28,8 @@ struct ContentView: View {
     /// overwrite a session the user has since paused or changed.
     @State private var autoResumeAttempted = false
 
-    init(storageFailureMessage: String? = nil) {
+    init(viewModel: PlayerViewModel, storageFailureMessage: String? = nil) {
+        self.viewModel = viewModel
         self.storageFailureMessage = storageFailureMessage
     }
 
@@ -66,6 +69,9 @@ struct ContentView: View {
         .onChange(of: scenePhase) { _, newPhase in
             viewModel.handleScenePhaseChange(newPhase)
             if newPhase == .active { applyAppearance(appearance) }
+            // Scenes added, renamed, or hidden this session become
+            // speakable in Siri phrases ("Play Rainy Day in Hush").
+            if newPhase == .background { HushShortcuts.updateAppShortcutParameters() }
         }
         .onChange(of: appearanceRaw) { _, _ in
             applyAppearance(appearance)
@@ -96,7 +102,7 @@ struct ContentView: View {
     let schema = Schema([SavedPreset.self, UserSoundAsset.self])
     let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
     let container = try! ModelContainer(for: schema, configurations: [config])
-    return ContentView()
+    return ContentView(viewModel: PlayerViewModel())
         .modelContainer(container)
         .environment(UserSoundLibrary(modelContext: ModelContext(container)))
 }

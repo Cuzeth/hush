@@ -1,5 +1,6 @@
 import SwiftUI
 import SwiftData
+import AppIntents
 import os.log
 
 private let appLogger = Logger(subsystem: "dev.abdeen.hush", category: "HushApp")
@@ -8,6 +9,10 @@ private let appLogger = Logger(subsystem: "dev.abdeen.hush", category: "HushApp"
 struct HushApp: App {
     let sharedModelContainer: ModelContainer
     @State private var userSoundLibrary: UserSoundLibrary
+    /// Owned here, not by ContentView, so Siri and the Shortcuts app can
+    /// reach it when the system launches Hush in the background to run a
+    /// shortcut. No window or view exists on that path.
+    @State private var player: PlayerViewModel
     /// Owned here, not by a view, so the launch sequence runs exactly once per
     /// app process — scene resumes and view rebuilds can't restart it.
     @State private var launchCoordinator = LaunchCoordinator()
@@ -61,11 +66,20 @@ struct HushApp: App {
         SoundAssetRegistry.userAssetsProvider = { [weak library] in
             library?.allSoundAssets ?? []
         }
+
+        // Bound before any intent runs: the scene query reads SavedPresets
+        // through this context, and the same main context backs the views.
+        let player = PlayerViewModel()
+        player.bindUserSoundLibrary(library)
+        player.bindModelContext(container.mainContext)
+        _player = State(initialValue: player)
+        AppDependencyManager.shared.add(dependency: player)
+        HushShortcuts.updateAppShortcutParameters()
     }
 
     var body: some Scene {
         WindowGroup {
-            RootView(storageFailureMessage: storageFailureMessage)
+            RootView(player: player, storageFailureMessage: storageFailureMessage)
                 .environment(userSoundLibrary)
                 .environment(launchCoordinator)
         }

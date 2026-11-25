@@ -4,7 +4,7 @@ import UIKit
 /// Which colorway of the launch animation to play. Deliberately separate from
 /// `ColorScheme`/`UIUserInterfaceStyle` so selection stays a pure value
 /// mapping that tests can drive without a window or trait collection.
-enum LaunchAppearance: String, CaseIterable, Sendable {
+nonisolated enum LaunchAppearance: String, CaseIterable, Sendable {
     case light
     case dark
 
@@ -21,7 +21,7 @@ enum LaunchAppearance: String, CaseIterable, Sendable {
 }
 
 /// Whether to play the full animation or the motion-reduced one.
-enum LaunchMotion: String, CaseIterable, Sendable {
+nonisolated enum LaunchMotion: String, CaseIterable, Sendable {
     case full
     case reduced
 }
@@ -39,7 +39,7 @@ enum LaunchAsset {
     /// root, so lookups try the root as well.
     static let subdirectory = "Animations"
 
-    static func name(appearance: LaunchAppearance, motion: LaunchMotion) -> String {
+    nonisolated static func name(appearance: LaunchAppearance, motion: LaunchMotion) -> String {
         switch motion {
         case .full:
             return "launch-\(appearance.rawValue)"
@@ -48,8 +48,9 @@ enum LaunchAsset {
         }
     }
 
-    /// Every animation that must ship in the app bundle.
-    static var allNames: [String] {
+    /// Every animation that must ship in the app bundle. Nonisolated because
+    /// `@Test(arguments:)` evaluates it off the main actor.
+    nonisolated static var allNames: [String] {
         LaunchMotion.allCases.flatMap { motion in
             LaunchAppearance.allCases.map { name(appearance: $0, motion: motion) }
         }

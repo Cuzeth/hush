@@ -464,10 +464,34 @@ final class PlayerViewModel {
         }
     }
 
+    // MARK: - Shortcuts
+
+    /// The scene with `id` in the live scene list, so a shortcut made before
+    /// a rename or edit plays the scene as it is now. Nil when the scene was
+    /// deleted or hidden since.
+    func scene(withID id: UUID) -> Preset? {
+        resolvedScenes().first { $0.id == id }
+    }
+
+    /// Loads and plays the scene with `id`: what the Play Scene shortcut and
+    /// Siri run. Returns the scene, or nil (and leaves the mix alone) when
+    /// it's gone. Works with no window open: the system can launch Hush in
+    /// the background to run the shortcut.
+    @discardableResult
+    func playScene(id: UUID) -> Preset? {
+        guard let scene = scene(withID: id) else { return nil }
+        engine.configureAudioSession()
+        loadPreset(scene)
+        // A background launch never sees a scene-phase change, so save the
+        // session here or auto-resume forgets what the shortcut started.
+        saveLastSession()
+        return scene
+    }
+
     /// The selector's scene list, built from the bound context's
     /// SavedPresets (newest first, matching the selector's @Query) and the
-    /// hide/rename prefs.
-    private func resolvedScenes() -> [Preset] {
+    /// hide/rename prefs. Internal for the Shortcuts scene query.
+    func resolvedScenes() -> [Preset] {
         var saved: [SavedPreset] = []
         if let modelContext {
             let descriptor = FetchDescriptor<SavedPreset>(

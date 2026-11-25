@@ -7,6 +7,7 @@ import SwiftUI
 /// time the overlay is removed the first screen is already laid out behind it
 /// at its final position.
 struct RootView: View {
+    let player: PlayerViewModel
     let storageFailureMessage: String?
 
     @Environment(LaunchCoordinator.self) private var launch
@@ -22,7 +23,7 @@ struct RootView: View {
         // base view and can never feed back into its geometry, so removing it
         // cannot nudge the first screen. ContentView is mounted unconditionally
         // either way, so it never transitions in.
-        ContentView(storageFailureMessage: storageFailureMessage)
+        ContentView(viewModel: player, storageFailureMessage: storageFailureMessage)
             .overlay {
                 if launch.isOverlayPresented {
                     LaunchOverlay(
